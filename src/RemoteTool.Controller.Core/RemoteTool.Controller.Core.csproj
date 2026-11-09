@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- 控制端核心邏輯（跨平台）：連線、指紋釘選、登入、子連線重連、輸入世代。 -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\RemoteTool.Protocol\RemoteTool.Protocol.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="RemoteTool.Tests" />
+  </ItemGroup>
+
+</Project>

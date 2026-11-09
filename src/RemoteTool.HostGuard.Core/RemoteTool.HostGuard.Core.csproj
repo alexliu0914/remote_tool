@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- HostGuard 核心邏輯（跨平台）：本機 IPC 訊息白名單、注入引擎與按鍵狀態表、重啟政策、監看。
+       SendInput、輸入桌面檢查、Named Pipe ACL 在 RemoteTool.HostGuard（Windows）。
+       刻意不參考 MessagePack 或任何網路元件：HostGuard 不連網。 -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="RemoteTool.Tests" />
+  </ItemGroup>
+
+</Project>

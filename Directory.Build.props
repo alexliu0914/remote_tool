@@ -1,0 +1,12 @@
+<Project>
+  <!-- 全方案共用設定。規劃書第四節：C# / .NET 10（LTS）。 -->
+  <PropertyGroup>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <!-- 讓 net10.0-windows 專案可在 Linux CI / 開發機上編譯（不能執行）。 -->
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <InvariantGlobalization>false</InvariantGlobalization>
+  </PropertyGroup>
+</Project>

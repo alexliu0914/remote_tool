@@ -1,0 +1,25 @@
+# .NET build output
+bin/
+obj/
+[Dd]ebug/
+[Rr]elease/
+*.user
+*.suo
+
+# Rider / VS
+.idea/
+.vs/
+
+# Test results
+[Tt]est[Rr]esults/
+*.trx
+coverage*.xml
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Local secrets / device keys — 絕不入庫
+*.pfx
+*.snk
+appsettings.*.local.json

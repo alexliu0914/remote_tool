@@ -1,0 +1,32 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build-and-test:
+    # 產品為 Windows-only（Host/HostGuard/Controller 目標為 net8.0-windows），
+    # 因此在 Windows runner 上建置整個方案。
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Restore
+        run: dotnet restore RemoteTool.sln
+
+      - name: Build
+        run: dotnet build RemoteTool.sln --configuration Release --no-restore
+
+      - name: Test
+        run: dotnet test RemoteTool.sln --configuration Release --no-build --verbosity normal

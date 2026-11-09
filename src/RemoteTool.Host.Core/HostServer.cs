@@ -54,6 +54,7 @@ public sealed class HostServer : IAsyncDisposable
     private Task? _acceptTask;
     private HostSession? _session;
     private long _connectionIds;
+    private uint _generationFloor; // 已用過的最大世代；新工作階段從其後開始，HostGuard 只接受遞增的世代
 
     public HostServer(HostServerOptions options, AccountStore accounts, LoginThrottle throttle,
         SessionTokenService tokens, IGuardChannel guard, IDesktopStateSource desktop, IVideoSource video,
@@ -105,6 +106,8 @@ public sealed class HostServer : IAsyncDisposable
             var listener = new TcpListener(_options.Endpoint);
             if (OperatingSystem.IsWindows())
                 listener.ExclusiveAddressUse = true; // 防止其他程序共用同一埠攔截連線
+            if (_options.Endpoint.Address.Equals(IPAddress.IPv6Any))
+                listener.Server.DualMode = true;     // 同時接受 IPv4
             listener.Start();
             _listener = listener;
             _listenCts = CancellationTokenSource.CreateLinkedTokenSource(_disposeCts.Token);
@@ -183,6 +186,8 @@ public sealed class HostServer : IAsyncDisposable
         }
 
         var remote = (IPEndPoint)client.Client.RemoteEndPoint!;
+        if (remote.Address.IsIPv4MappedToIPv6)
+            remote = new IPEndPoint(remote.Address.MapToIPv4(), remote.Port);
         FramedConnection? conn = null;
         try
         {
@@ -311,7 +316,7 @@ public sealed class HostServer : IAsyncDisposable
                 if (_session is null)
                 {
                     session = new HostSession(this, account, remote.Address, Interlocked.Increment(ref _connectionIds),
-                        _options, _tokens, _guard, _desktop, _video, _log, _time);
+                        _generationFloor + 1, _options, _tokens, _guard, _desktop, _video, _log, _time);
                     _session = session;
                 }
             }
@@ -364,6 +369,7 @@ public sealed class HostServer : IAsyncDisposable
         {
             if (ReferenceEquals(_session, session))
                 _session = null;
+            _generationFloor = Math.Max(_generationFloor, session.FinalGeneration);
         }
         _log.Audit($"工作階段結束，帳號 {session.Account}，來源 {session.RemoteAddress}，原因 {reason}");
         SessionEnded?.Invoke(session, reason);

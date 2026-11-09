@@ -1,16 +1,140 @@
+using System.Diagnostics;
+using System.Net;
+using System.Runtime.Versioning;
+using System.Text;
+using RemoteTool.Host;
+using RemoteTool.Host.Core;
 using RemoteTool.Protocol;
+using RemoteTool.Windows;
 
-// 被控端（遠端電腦）進入點 — Spike 0 骨架。
+// Host.exe — 被控端主程式（Spike 0 主控台版；系統列介面於 M1 實作）。
 //
-// 職責（見規劃書 V2.2.2 第三節）：
-//   - TLS 監聽、帳密驗證、三條連線與 Session Token
-//   - 螢幕擷取與 H.264 編碼
-//   - 接收並「驗證」遠端鍵鼠事件，再經本機 IPC 交給 HostGuard 注入
-//     （Host.exe 本身不呼叫 SendInput）
-//   - 剪貼簿、檔案傳輸、工作階段監控、系統列
+//   Host.exe --add-account <名稱>        建立或更新帳號（互動輸入密碼，至少 10 字元）
+//   Host.exe --remove-account <名稱>
+//   Host.exe --fingerprint               顯示主機指紋 SHA-256(SPKI)，供控制端首次連線時核對
+//   Host.exe --guard-pipe <名稱> --guard-pid <PID> [--port 52100]
+//                                        由 HostGuard 啟動時使用；不經 HostGuard 不提供遠端控制
 //
-// 以使用者權限執行，無 Windows 服務、無 SYSTEM。實際功能於 M1 起逐項實作。
+// 結束碼：0 = 正常結束（不重啟）；2 = HostGuard IPC 中斷；1 = 設定錯誤；其他非 0 = 異常（HostGuard 依政策重啟）。
 
-Console.WriteLine($"RemoteTool Host (被控端) — 骨架");
-Console.WriteLine($"支援通道: {string.Join(", ", Enum.GetNames<ChannelKind>())}");
-Console.WriteLine("尚未實作：TLS 監聽、擷取、編碼、IPC。見規劃書 Spike 0 / M1。");
+if (!OperatingSystem.IsWindows())
+{
+    Console.Error.WriteLine("Host 只支援 Windows 11。");
+    return 1;
+}
+Console.OutputEncoding = Encoding.UTF8;
+return await HostMain.RunAsync(args);
+
+[SupportedOSPlatform("windows")]
+internal static class HostMain
+{
+    public static async Task<int> RunAsync(string[] args)
+    {
+        var store = new HostConfigStore(Path.Combine(HostConfigStore.DefaultDirectory, "host.dat"), new DpapiProtector());
+        var settings = store.Load();
+        using var identity = store.LoadOrCreateIdentity(settings);
+        var accounts = new AccountStore(settings, new PasswordHasher());
+
+        string? Arg(string name)
+        {
+            int i = Array.IndexOf(args, name);
+            return i >= 0 && i + 1 < args.Length ? args[i + 1] : null;
+        }
+
+        if (Arg("--add-account") is { } addName)
+        {
+            var password = ReadPassword("密碼（至少 10 字元）：");
+            if (password != ReadPassword("再輸入一次："))
+            {
+                Console.Error.WriteLine("兩次輸入不一致。");
+                return 1;
+            }
+            try
+            {
+                accounts.SetPassword(addName, password);
+            }
+            catch (ArgumentException ex)
+            {
+                Console.Error.WriteLine(ex.Message);
+                return 1;
+            }
+            store.Save(settings);
+            Console.WriteLine($"已儲存帳號 {addName}。");
+            return 0;
+        }
+        if (Arg("--remove-account") is { } removeName)
+        {
+            Console.WriteLine(accounts.Remove(removeName) ? "已移除。" : "找不到該帳號。");
+            store.Save(settings);
+            return 0;
+        }
+        if (args.Contains("--fingerprint"))
+        {
+            Console.WriteLine(identity.FingerprintText);
+            return 0;
+        }
+
+        var pipeName = Arg("--guard-pipe");
+        if (pipeName is null || !int.TryParse(Arg("--guard-pid"), out int guardPid))
+        {
+            Console.Error.WriteLine("Host.exe 須由 HostGuard.exe 啟動（遠端鍵鼠只由 HostGuard 注入）。請執行 HostGuard.exe。");
+            return 1;
+        }
+        int port = int.TryParse(Arg("--port"), out int p) ? p : ProtocolConstants.DefaultPort;
+
+        var log = new HostFileLog(new FileLog("host"));
+        if (accounts.Usernames.Count == 0)
+            log.Warn("尚未建立任何帳號，請先執行 Host.exe --add-account <名稱>");
+
+        await using var guard = await GuardPipeClient.ConnectAsync(pipeName, guardPid, CancellationToken.None);
+        using var desktop = new WindowsDesktopStateSource(log);
+
+        var server = new HostServer(new HostServerOptions
+            {
+                Endpoint = new IPEndPoint(IPAddress.IPv6Any, port) ,
+                Certificate = identity.Certificate,
+                WindowsSessionId = DesktopState.CurrentSessionId,
+            },
+            accounts, new LoginThrottle(), new SessionTokenService(log: log), guard, desktop, new PlaceholderVideoSource(), log);
+        await using var _ = server;
+
+        var exit = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+        guard.Faulted += () => exit.TrySetResult(2);
+        Console.CancelKeyPress += (_, e) => { e.Cancel = true; exit.TrySetResult(0); };
+        server.SessionStarted += s => log.Info($"【正在被遠端操控】帳號 {s.Account}，來源 {s.RemoteAddress}");
+        server.SessionEnded += (s, r) => log.Info($"遠端操控已結束：{r}");
+
+        if (desktop.IsOnConsole)
+            server.StartListening();
+        else
+            log.Info("本工作階段不在主控台，暫不監聽");
+
+        log.Info($"主機指紋 SHA-256(SPKI)：{identity.FingerprintText}");
+        log.Info("按 Ctrl+C 結束（正常結束，HostGuard 不會重啟）。");
+
+        int code = await exit.Task;
+        log.Info(code == 0 ? "Host 正常結束" : "HostGuard IPC 中斷，停止遠端控制並結束");
+        return code;
+    }
+
+    private static string ReadPassword(string prompt)
+    {
+        Console.Write(prompt);
+        var sb = new StringBuilder();
+        while (true)
+        {
+            var key = Console.ReadKey(intercept: true);
+            if (key.Key == ConsoleKey.Enter)
+                break;
+            if (key.Key == ConsoleKey.Backspace)
+            {
+                if (sb.Length > 0) sb.Length--;
+                continue;
+            }
+            if (!char.IsControl(key.KeyChar))
+                sb.Append(key.KeyChar);
+        }
+        Console.WriteLine();
+        return sb.ToString();
+    }
+}

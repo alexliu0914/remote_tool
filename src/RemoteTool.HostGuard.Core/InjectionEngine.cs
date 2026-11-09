@@ -174,6 +174,16 @@ public sealed class InjectionEngine
             ReleaseAll("桌面不可控制");
     }
 
+    /// <summary>
+    /// 新的 Host.exe 實例開始：世代從 0 重新計算（新 Host 不沿用任何舊授權與世代），保持暫停直到其第一個 Resume。
+    /// </summary>
+    public void ResetForNewHost()
+    {
+        ReleaseAll("新的 Host 實例");
+        _paused = true;
+        _generation = 0;
+    }
+
     /// <summary>Host.exe 已結束或 IPC 中斷：暫停並釋放所有遠端按下的鍵。</summary>
     public void OnHostGone()
     {

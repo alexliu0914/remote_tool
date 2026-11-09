@@ -12,14 +12,14 @@ internal sealed class FakeInjector : IInputInjector
     public bool Key(ushort scanCode, bool extended, bool down)
     {
         if (down ? FailDown : FailUp) return false;
-        Calls.Add($"key {scanCode:X2}{(extended ? "e" : "")} {(down ? "down" : "up")}");
+        lock (Calls) Calls.Add($"key {scanCode:X2}{(extended ? "e" : "")} {(down ? "down" : "up")}");
         return true;
     }
     public bool MouseMove(ushort x, ushort y) { Calls.Add($"move {x},{y}"); return true; }
     public bool MouseButton(GuardMouseButton button, bool down)
     {
         if (down ? FailDown : FailUp) return false;
-        Calls.Add($"button {button} {(down ? "down" : "up")}");
+        lock (Calls) Calls.Add($"button {button} {(down ? "down" : "up")}");
         return true;
     }
     public bool MouseWheel(short delta, bool horizontal) { Calls.Add($"wheel {delta}"); return true; }
@@ -348,5 +348,29 @@ public class HostSupervisorTests
 
         Assert.Equal(RestartAction.GiveUp, await supervisor.RunAsync(CancellationToken.None));
         Assert.Equal(6, launcher.Starts); // 首次啟動 + 5 次重啟
+    }
+}
+
+public class GuardLoopNewInstanceTests
+{
+    [Fact]
+    public async Task NewHostInstance_ResetsGeneration_SoItsFirstResumeIsAccepted()
+    {
+        var injector = new FakeInjector();
+        var engine = new InjectionEngine(injector, new FakeProbe());
+        await using var loop = new GuardLoop(engine, tickInterval: TimeSpan.FromHours(1));
+
+        long first = loop.BeginHostInstance();
+        loop.Post(first, GuardMessage.Resume(7));
+        loop.Post(first, GuardMessage.Pause(8));
+        loop.HostGone(first);
+
+        long second = loop.BeginHostInstance();   // 重啟後的 Host 從世代 1 開始
+        loop.Post(second, GuardMessage.Pause(1));
+        loop.Post(second, GuardMessage.Resume(1));
+        loop.Post(second, GuardMessage.Key(1, 0x2A, false, true));
+        await loop.FlushAsync();
+
+        Assert.Contains("key 2A down", injector.Calls);
     }
 }

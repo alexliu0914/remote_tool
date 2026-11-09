@@ -8,25 +8,25 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-and-test:
-    # 產品為 Windows-only（Host/HostGuard/Controller 目標為 net8.0-windows），
-    # 因此在 Windows runner 上建置整個方案。
+  windows:
+    # 產品為 Windows-only；在 Windows runner 上建置整個方案並執行測試。
     runs-on: windows-latest
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '8.0.x'
+          dotnet-version: '10.0.x'
+      - run: dotnet restore RemoteTool.sln
+      - run: dotnet build RemoteTool.sln --configuration Release --no-restore
+      - run: dotnet test RemoteTool.sln --configuration Release --no-build --verbosity normal
 
-      - name: Restore
-        run: dotnet restore RemoteTool.sln
-
-      - name: Build
-        run: dotnet build RemoteTool.sln --configuration Release --no-restore
-
-      - name: Test
-        run: dotnet test RemoteTool.sln --configuration Release --no-build --verbosity normal
+  linux-core:
+    # 核心程式庫刻意跨平台，確保不意外依賴 Windows API。
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - run: dotnet build RemoteTool.sln --configuration Release
+      - run: dotnet test tests/RemoteTool.Tests --configuration Release --no-build

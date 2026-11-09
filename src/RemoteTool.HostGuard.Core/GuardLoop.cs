@@ -20,7 +20,7 @@ public sealed class GuardLoop : IAsyncDisposable
     private long _activeInstance; // 0 = 目前沒有可接受訊息的 Host
 
     private readonly record struct Item(Kind Kind, long Instance, GuardMessage Message, TaskCompletionSource? Flush = null);
-    private enum Kind { Message, Tick, HostGone, Flush }
+    private enum Kind { Message, Tick, HostStarted, HostGone, Flush }
 
     public GuardLoop(InjectionEngine engine, IGuardLog? log = null, TimeSpan? tickInterval = null, TimeProvider? time = null)
     {
@@ -41,6 +41,7 @@ public sealed class GuardLoop : IAsyncDisposable
     {
         long id = Interlocked.Increment(ref _instanceCounter);
         Interlocked.Exchange(ref _activeInstance, id);
+        _queue.Writer.TryWrite(new Item(Kind.HostStarted, id, default));
         return id;
     }
 
@@ -86,6 +87,9 @@ public sealed class GuardLoop : IAsyncDisposable
                 {
                     case Kind.Tick:
                         _engine.Tick();
+                        break;
+                    case Kind.HostStarted:
+                        _engine.ResetForNewHost();
                         break;
                     case Kind.HostGone:
                         _engine.OnHostGone();

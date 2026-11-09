@@ -42,7 +42,7 @@ public sealed class HostSession
     private long _droppedInput;
 
     internal HostSession(HostServer server, string account, IPAddress remoteAddress, long controlConnectionId,
-        HostServerOptions options, SessionTokenService tokens, IGuardChannel guard, IDesktopStateSource desktop,
+        uint initialGeneration, HostServerOptions options, SessionTokenService tokens, IGuardChannel guard, IDesktopStateSource desktop,
         IVideoSource video, IHostLog log, TimeProvider time)
     {
         _server = server;
@@ -56,13 +56,16 @@ public sealed class HostSession
         _video = video;
         _log = log;
         _time = time;
-        _gate = new ControlGate(time, options.ResumeStableDuration);
+        _gate = new ControlGate(time, options.ResumeStableDuration, initialGeneration);
     }
 
     public string Account { get; }
     public IPAddress RemoteAddress { get; }
     public long ControlConnectionId { get; }
     public bool IsEnded => Volatile.Read(ref _ended) != 0;
+
+    /// <summary>結束時送給 HostGuard 的最後世代（下一個工作階段須大於此值）。</summary>
+    internal uint FinalGeneration { get; private set; }
 
     /// <summary>結束時完成，結果為結束原因。</summary>
     public Task<DisconnectReason> Completion => _completion.Task;
@@ -464,6 +467,7 @@ public sealed class HostSession
             file = _fileConn;
             _videoConn = _fileConn = null;
             nextGeneration = _gate.Generation + 1;
+            FinalGeneration = nextGeneration;
         }
 
         // 被控端負責釋放：讓 HostGuard 暫停（丟棄舊世代）並放開所有遠端按下的鍵

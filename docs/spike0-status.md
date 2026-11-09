@@ -33,7 +33,11 @@
 - 軟體 H.264 編碼器的授權與專利責任：未確認（G0-02 尚未實作）。
 - `WTSSessionInfoEx` 鎖定旗標、UAC 安全桌面時 `OpenInputDesktop` 的行為、`SessionSwitch` 事件時序：待 G0-03 實機確認。
 
-## 雙機手動測試步驟（建議）
+## 雙機手動測試步驟
+
+完整、可單獨使用的步驟見 **[spike0-test-procedure.md](spike0-test-procedure.md)**（T01～T20，含預期結果、證據與結果記錄表）。以下為摘要。
+
+### 摘要
 
 前置：兩台 Windows 11，記錄型號、Windows 版本（`winver`）、網路條件；被控端以 `Host.exe --add-account` 建立帳號並放行 TCP 52100。記錄檔位於 `%LOCALAPPDATA%\RemoteTool\logs\`（`host.log`、`hostguard.log`）。
 

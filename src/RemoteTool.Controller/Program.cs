@@ -13,6 +13,10 @@ using RemoteTool.Protocol.Messages;
 //   key <掃描碼16進位> [e]  按下並放開一個鍵（e = extended），例：key 1C
 //   hold <掃描碼16進位>     按住一個鍵（測試按鍵釋放：之後拔網路線或結束 Host）
 //   release <掃描碼16進位>  放開
+//   move <x> <y>          移動滑鼠到虛擬桌面座標（0–65535，例：move 32768 32768 為中央）
+//   click <left|right|middle>   按一下滑鼠
+//   mdown / mup <left|right|middle>  按住／放開滑鼠按鈕
+//   wheel <量>            滾輪（120 為一格，負數向下）
 //   drop video|file       強制中斷子連線，驗證獨立重連（NET-03）
 //   status                顯示狀態
 //   quit                  中斷連線
@@ -80,7 +84,7 @@ client.SubConnectionChanged += (role, up) => Console.WriteLine(up ? $"[{role} �
 client.ReconnectFailed += role => Console.WriteLine($"[{role} 30 秒內未能重連，輸入 drop {role.ToString().ToLowerInvariant()} 可重試]");
 _ = client.Completion.ContinueWith(t => Console.WriteLine($"[連線已結束：{t.Result}]"), TaskScheduler.Default);
 
-Console.WriteLine("已連線。輸入 status / text / key / hold / release / drop / quit。");
+Console.WriteLine("已連線。輸入 status / text / key / hold / release / move / click / mdown / mup / wheel / drop / quit。");
 while (!client.Completion.IsCompleted)
 {
     var line = await Task.Run(Console.ReadLine);
@@ -120,6 +124,27 @@ while (!client.Completion.IsCompleted)
                 Report(await client.SendKeyAsync(scan, ext, false));
                 break;
             }
+            case "move" when parts.Length == 2:
+            {
+                var xy = parts[1].Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                Report(await client.SendMouseMoveAsync(ushort.Parse(xy[0]), ushort.Parse(xy[1])));
+                break;
+            }
+            case "click" when parts.Length == 2:
+            {
+                var b = ParseButton(parts[1]);
+                Report(await client.SendMouseButtonAsync(b, true) && await client.SendMouseButtonAsync(b, false));
+                break;
+            }
+            case "mdown" when parts.Length == 2:
+                Report(await client.SendMouseButtonAsync(ParseButton(parts[1]), true));
+                break;
+            case "mup" when parts.Length == 2:
+                Report(await client.SendMouseButtonAsync(ParseButton(parts[1]), false));
+                break;
+            case "wheel" when parts.Length == 2:
+                Report(await client.SendMouseWheelAsync(short.Parse(parts[1]), false));
+                break;
             case "drop" when parts.Length == 2:
                 var role = parts[1] == "video" ? ChannelRole.Video : ChannelRole.File;
                 if ((role == ChannelRole.Video ? client.IsVideoConnected : client.IsFileConnected))
@@ -132,7 +157,7 @@ while (!client.Completion.IsCompleted)
                 break;
         }
     }
-    catch (Exception ex) when (ex is FormatException or ConnectException or IOException)
+    catch (Exception ex) when (ex is FormatException or OverflowException or IndexOutOfRangeException or ConnectException or IOException)
     {
         Console.WriteLine(ex.Message);
     }
@@ -147,6 +172,14 @@ static (ushort Scan, bool Extended) ParseKey(string text)
     var parts = text.Split(' ', StringSplitOptions.RemoveEmptyEntries);
     return (Convert.ToUInt16(parts[0], 16), parts.Length > 1 && parts[1] == "e");
 }
+
+static MouseButton ParseButton(string text) => text.Trim() switch
+{
+    "left" => MouseButton.Left,
+    "right" => MouseButton.Right,
+    "middle" => MouseButton.Middle,
+    _ => throw new FormatException("按鈕須為 left、right 或 middle"),
+};
 
 static string Describe(PauseReason reason) => reason switch
 {

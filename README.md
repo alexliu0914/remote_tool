@@ -2,7 +2,7 @@
 
 Windows 11 點對點遠端操控工具（自用）。控制端直接以 IP 連到被控端，不經任何中央協調、雲端或中繼伺服器。
 
-設計依據：規劃書 **V2.2.2 基線**（Spike 0 階段）。Spike 0 各 Gate 的實作與驗證狀態見 [docs/spike0-status.md](docs/spike0-status.md)。
+設計依據：規劃書 **V2.2.2 基線**（Spike 0 階段）。Spike 0 各 Gate 的實作與驗證狀態見 [docs/spike0-status.md](docs/spike0-status.md)，雙機實測步驟見 [docs/spike0-test-procedure.md](docs/spike0-test-procedure.md)。
 
 ## 架構
 

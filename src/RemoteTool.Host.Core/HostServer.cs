@@ -108,12 +108,43 @@ public sealed class HostServer : IAsyncDisposable
                 listener.ExclusiveAddressUse = true; // 防止其他程序共用同一埠攔截連線
             if (_options.Endpoint.Address.Equals(IPAddress.IPv6Any))
                 listener.Server.DualMode = true;     // 同時接受 IPv4
-            listener.Start();
+            try
+            {
+                listener.Start();
+            }
+            catch
+            {
+                listener.Dispose();
+                throw;
+            }
             _listener = listener;
             _listenCts = CancellationTokenSource.CreateLinkedTokenSource(_disposeCts.Token);
             _acceptTask = AcceptLoopAsync(listener, _listenCts.Token);
         }
         _log.Info($"開始監聽 {LocalEndpoint}");
+    }
+
+    /// <summary>
+    /// 開始監聽；埠暫時被占用（例如切換使用者時另一使用者的 Host 尚未讓出）時每 500 ms 重試，直到逾時。
+    /// </summary>
+    public async Task StartListeningWithRetryAsync(TimeSpan timeout, CancellationToken ct = default)
+    {
+        long start = _time.GetTimestamp();
+        while (true)
+        {
+            try
+            {
+                StartListening();
+                return;
+            }
+            catch (SocketException ex) when (ex.SocketErrorCode is SocketError.AddressAlreadyInUse or SocketError.AccessDenied)
+            {
+                if (_time.GetElapsedTime(start) > timeout)
+                    throw;
+                _log.Warn($"埠 {_options.Endpoint.Port} 被占用，稍後重試");
+                await Task.Delay(TimeSpan.FromMilliseconds(500), _time, ct).ConfigureAwait(false);
+            }
+        }
     }
 
     /// <summary>停止監聽並讓出埠（切換使用者時）。不影響既有連線；呼叫端另行中止工作階段。</summary>
@@ -387,7 +418,17 @@ public sealed class HostServer : IAsyncDisposable
     {
         if (active)
         {
-            StartListening();
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await StartListeningWithRetryAsync(TimeSpan.FromSeconds(60), _disposeCts.Token).ConfigureAwait(false);
+                }
+                catch (Exception ex) when (ex is SocketException or OperationCanceledException or ObjectDisposedException)
+                {
+                    _log.Warn($"無法重新監聽：{ex.Message}");
+                }
+            });
             return;
         }
         _ = Task.Run(async () =>

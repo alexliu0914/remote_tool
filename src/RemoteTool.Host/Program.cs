@@ -105,17 +105,53 @@ internal static class HostMain
         server.SessionEnded += (s, r) => log.Info($"遠端操控已結束：{r}");
 
         if (desktop.IsOnConsole)
-            server.StartListening();
+            await server.StartListeningWithRetryAsync(TimeSpan.FromSeconds(60));
         else
             log.Info("本工作階段不在主控台，暫不監聽");
 
         log.Info($"主機指紋 SHA-256(SPKI)：{identity.FingerprintText}");
         log.Info("按 Ctrl+C 結束（正常結束，HostGuard 不會重啟）。");
+#if DEBUG
+        StartTestHooks(exit, log);
+#endif
 
         int code = await exit.Task;
         log.Info(code == 0 ? "Host 正常結束" : "HostGuard IPC 中斷，停止遠端控制並結束");
         return code;
     }
+
+#if DEBUG
+    /// <summary>
+    /// 僅 Debug 建置：Spike 0 實測用按鍵（在 Host 主控台視窗按下）。
+    ///   Q = 正常結束（結束碼 0，模擬系統列「結束」；GUARD-03）
+    ///   X = 未處理例外（GUARD-01 / GUARD-03）
+    /// </summary>
+    private static void StartTestHooks(TaskCompletionSource<int> exit, IHostLog log)
+    {
+        if (Console.IsInputRedirected)
+            return;
+        log.Info("[Debug 測試按鍵] Q = 正常結束，X = 未處理例外");
+        var thread = new Thread(() =>
+        {
+            while (true)
+            {
+                var key = Console.ReadKey(intercept: true).Key;
+                if (key == ConsoleKey.Q)
+                {
+                    log.Info("[測試] 正常結束");
+                    exit.TrySetResult(0);
+                    return;
+                }
+                if (key == ConsoleKey.X)
+                {
+                    log.Warn("[測試] 觸發未處理例外");
+                    throw new InvalidOperationException("Spike 0 測試用未處理例外（GUARD-01）");
+                }
+            }
+        }) { IsBackground = true, Name = "TestHooks" };
+        thread.Start();
+    }
+#endif
 
     private static string ReadPassword(string prompt)
     {

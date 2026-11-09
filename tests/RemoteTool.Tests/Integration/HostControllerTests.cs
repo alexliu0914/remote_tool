@@ -275,8 +275,41 @@ public sealed class HostControllerTests : IAsyncLifetime
 
         // A 回到主控台後重新監聽，必須重新登入；舊 Token 全部失效
         _desktop.RaiseConsoleActive(true);
-        Assert.True(_server.IsListening);
+        await Wait.UntilAsync(() => _server.IsListening);
         Assert.Equal(0, _tokens.OutstandingCount);
+    }
+
+    [Fact]
+    public async Task Relisten_RetriesWhilePortHeldByAnotherProcess()
+    {
+        // 取得一個固定埠（本類別的主伺服器用的是隨機埠，重新監聽會換埠）
+        var probe = new System.Net.Sockets.TcpListener(IPAddress.Loopback, 0);
+        probe.Start();
+        int port = ((IPEndPoint)probe.LocalEndpoint).Port;
+        probe.Stop();
+
+        var desktop = new FakeDesktop { OnConsole = false };
+        var accounts = new AccountStore(new HostSettings(), new PasswordHasher(new Argon2Parameters(1024, 1, 1)));
+        await using var server = new HostServer(
+            new HostServerOptions { Endpoint = new IPEndPoint(IPAddress.Loopback, port), Certificate = _identity.Certificate },
+            accounts, new LoginThrottle(), new SessionTokenService(), new FakeGuardChannel(), desktop, new FakeVideoSource());
+
+        // 模擬另一使用者的 Host 尚未讓出埠（明確關閉位址重用；Linux 上 .NET 預設開 SO_REUSEPORT）
+        var other = new System.Net.Sockets.Socket(System.Net.Sockets.AddressFamily.InterNetwork,
+            System.Net.Sockets.SocketType.Stream, System.Net.Sockets.ProtocolType.Tcp);
+        if (OperatingSystem.IsWindows())
+            other.ExclusiveAddressUse = true;
+        else
+            other.SetSocketOption(System.Net.Sockets.SocketOptionLevel.Socket, System.Net.Sockets.SocketOptionName.ReuseAddress, false);
+        other.Bind(new IPEndPoint(IPAddress.Loopback, port));
+        other.Listen();
+
+        desktop.RaiseConsoleActive(true);
+        await Task.Delay(300);
+        Assert.False(server.IsListening);
+        other.Dispose();
+        await Wait.UntilAsync(() => server.IsListening, because: "埠釋放後應重試成功");
+        Assert.Equal(port, server.LocalEndpoint!.Port);
     }
 
     [Fact]

@@ -56,6 +56,7 @@ dotnet test    RemoteTool.sln -c Release
 | --- | --- |
 | [docs/plan/PLAN_V2.2.2.md](docs/plan/PLAN_V2.2.2.md) | **規劃書原文（最高依據）** |
 | [docs/PLAN_GAPS.md](docs/PLAN_GAPS.md) | 規劃書與目前文件、程式的差異與處理狀態 |
+| [docs/PROTOCOL_V1.md](docs/PROTOCOL_V1.md) | Protocol V1 正式規格（分幀、訊息、錯誤處理、版本協商、子連線授權） |
 | [docs/REQUIREMENTS.md](docs/REQUIREMENTS.md) | MVP 範圍、功能與非功能需求、不做的項目 |
 | [docs/DESIGN.md](docs/DESIGN.md) | 架構、連線流程、畫面 / 輸入 / 檔案設計與實作狀態 |
 | [docs/DECISIONS.md](docs/DECISIONS.md) | 已核准的架構決議（只增不刪） |

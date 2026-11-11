@@ -50,4 +50,13 @@ dotnet test    RemoteTool.sln -c Release
 擷取、編碼、輸入注入（HostGuard）、剪貼簿、檔案傳輸與 WPF 介面依規劃書後續逐項實作，
 並以 G0-01～05 與 GUARD-01～05 實機驗收後才標記完成。
 
-測試步驟見 [docs/TESTING.md](docs/TESTING.md)。
+## 文件
+
+| 文件 | 內容 |
+| --- | --- |
+| [docs/REQUIREMENTS.md](docs/REQUIREMENTS.md) | MVP 範圍、功能與非功能需求、不做的項目 |
+| [docs/DESIGN.md](docs/DESIGN.md) | 架構、連線流程、畫面 / 輸入 / 檔案設計與實作狀態 |
+| [docs/DECISIONS.md](docs/DECISIONS.md) | 已核准的架構決議（只增不刪） |
+| [docs/ACCEPTANCE_CRITERIA.md](docs/ACCEPTANCE_CRITERIA.md) | G0、GUARD 驗收條件與狀態定義 |
+| [docs/TEST_STATUS.md](docs/TEST_STATUS.md) | 驗收追蹤與測試紀錄（只增不刪） |
+| [docs/TESTING.md](docs/TESTING.md) | 測試步驟 |

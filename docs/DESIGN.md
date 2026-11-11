@@ -18,9 +18,9 @@
 | --- | --- | --- | --- |
 | `src/RemoteTool.Protocol` | net8.0 | 封包分幀、訊息 schema、`FrameStream` | 已實作 |
 | `src/RemoteTool.Connection` | net8.0 | TLS 1.3、指紋、帳密、token、三條連線、心跳 | 已實作 |
-| `src/RemoteTool.Video` | net8.0 | A1 區塊差異編解碼、縮放、影像串流迴圈（不含擷取） | A1 實作中 |
-| `src/RemoteTool.Host` | net8.0-windows | 被控端主程式；DXGI 擷取 | 連線已實作；擷取 A1 實作中 |
-| `src/RemoteTool.Controller` | net8.0-windows（WPF） | 控制端 | 主控台版已實作；WPF 版 A1 實作中 |
+| `src/RemoteTool.Video` | net8.0 | A1 區塊差異編解碼、縮放、影像串流迴圈（不含擷取） | 已實作（待實機驗證） |
+| `src/RemoteTool.Host` | net8.0-windows | 被控端主程式；DXGI 擷取 | 已實作（DXGI 待實機驗證） |
+| `src/RemoteTool.Controller` | net8.0-windows（WPF） | 控制端：登入視窗、指紋對話框、遠端畫面視窗 | 已實作（WPF 待實機驗證） |
 | `src/RemoteTool.HostGuard` | net8.0-windows | 輸入注入與 Host 監看 | 規劃中（B1） |
 
 跨平台專案可在 Linux / CI 用真實 TLS 測試（D-023）。
@@ -53,6 +53,8 @@
 
 Control 結束 → 撤銷工作階段：作廢 token、關閉 Video / File（D-008）。
 
+首次連線：上圖的指紋確認在一條探測連線上進行，使用者確認後關閉，再以釘選的指紋重新連線並送帳密（D-032）。
+
 ### 2.3 子通道擴充點
 
 - 被控端：`HostServerOptions.SubChannelHandler` 在子連線驗證成功後被呼叫，取得可寫入的 `FrameStream` 與對方送來封包的佇列；連線結束時取消。
@@ -64,7 +66,7 @@ Control 結束 → 撤銷工作階段：作廢 token、關閉 Video / File（D-0
 
 ## 3. 遠端畫面
 
-### 3.1 A1 PoC（A1 實作中；D-026～D-030）
+### 3.1 A1 PoC（已實作，待實機驗證；D-026～D-030、D-033）
 
 ```
 被控端                                                         控制端
@@ -83,6 +85,8 @@ DXGI Desktop Duplication（主螢幕）
 - 無變化時（DXGI 逾時）不送資料。
 - DXGI `ACCESS_LOST`（解析度變更、桌面切換、UAC）時重建 duplication；重建失敗則每秒重試，期間不送畫面。
 - 解碼端防護：寬高上限 8192、區塊必須在畫面內、解壓後大小必須剛好等於區塊大小（防壓縮炸彈）。
+- 控制端：背景執行緒解到 `FrameCanvas`，每張完成時累積變動範圍；UI 執行緒只把變動範圍寫入 `WriteableBitmap`（Bgr32，忽略 DXGI 不可靠的 alpha）。UI 跟不上時多張合併成一次更新，不排隊。
+- 已知限制：高 DPI 下「原尺寸」並非逐像素（點陣圖以 96 DPI 顯示），A3 處理。
 
 ### 3.2 A2 正式路徑（規劃中）
 

@@ -20,7 +20,8 @@ Windows 11 點對點遠端操控工具（自用）。控制端直接以 IP 連�
 | 控制端 | `src/RemoteTool.Controller` | 連線、WPF 介面、解碼顯示、擷取鍵鼠、剪貼簿、檔案拖拉 |
 | 被控端主程式 | `src/RemoteTool.Host` | TLS、帳密、三條連線、擷取、編碼、剪貼簿、檔案、工作階段監控 |
 | 被控端守護 | `src/RemoteTool.HostGuard` | 唯一注入輸入者（SendInput）、按鍵狀態、監看與重啟 Host |
-| 共用協定 | `src/RemoteTool.Protocol` | 封包分幀、通道與訊息類型（跨平台、可測） |
+| 共用協定 | `src/RemoteTool.Protocol` | 封包分幀、通道與訊息類型、MessagePack 訊息（跨平台、可測） |
+| 連線層 | `src/RemoteTool.Connection` | TLS 1.3、主機指紋、帳密、Session Token、三條連線與心跳（跨平台、可測） |
 
 三條 TLS 連線共用埠 52100：`Control`（鍵鼠、剪貼簿、心跳）、`Video`（H.264）、`File`（限速檔案傳輸）。
 
@@ -38,4 +39,15 @@ dotnet test    RemoteTool.sln -c Release
 
 ## 現況
 
-Spike 0 骨架：方案結構、共用協定分幀與測試、三個元件進入點。擷取、編碼、輸入注入、檔案傳輸等平台專屬功能依規劃書 Spike 0 / M1 逐項實作，並以 G0-01～05 與 GUARD-01～05 實機驗收後才標記完成。
+**M1 第一步：連線與登入** 已完成（主控台版本）：
+
+- 被控端 TLS 1.3 監聽、自簽 ECDSA 憑證，指紋為 SHA-256(SPKI)
+- 控制端首次連線核對指紋、指紋變更即中止；核對一律在送出帳密之前
+- 帳密以 PBKDF2-SHA256 雜湊保存；同來源 5 分鐘內失敗 5 次暫時鎖定
+- 登入後以一次性 Session Token 建立 Video / File 子連線；Control 中斷即撤銷整個工作階段
+- 心跳 2 秒一次、10 秒逾時；同時只允許一個控制端
+
+擷取、編碼、輸入注入（HostGuard）、剪貼簿、檔案傳輸與 WPF 介面依規劃書後續逐項實作，
+並以 G0-01～05 與 GUARD-01～05 實機驗收後才標記完成。
+
+測試步驟見 [docs/TESTING.md](docs/TESTING.md)。

@@ -1,184 +1,251 @@
 # 測試流程
 
-目前為 **Spike 0 骨架**：可測的是共用協定庫 `RemoteTool.Protocol`（封包分幀）的單元測試，
-以及三個元件（Controller / Host / HostGuard）能否建置並啟動。TLS、擷取、編碼、輸入注入、
-檔案傳輸尚未實作，因此還沒有端對端（兩台電腦互連）的測試。
+## 目前進度
+
+**M1 第一步：連線與登入** 已完成，可以測：
+
+- 被控端（Host）以 TLS 1.3 監聽 TCP 52100，第一次啟動自動產生自簽憑證
+- 控制端（Controller）以 IP 連線，**第一次連線核對主機指紋**，指紋變了就中止
+- 帳號密碼登入（被控端只存雜湊）；同一來源 5 分鐘內失敗 5 次即暫時鎖定
+- 登入後以一次性 token 建立 Video、File 兩條子連線（共三條連線）
+- 心跳：控制端每 2 秒送一次；10 秒沒心跳即判定斷線
+- 同時只允許一個控制端
+
+**尚未實作**：遠端畫面、鍵鼠、剪貼簿、檔案傳輸、WPF 視窗介面。目前兩個程式都是主控台（黑色視窗）版本。
+
+以下指令都在 **PowerShell** 中執行。
 
 ## 一、前置需求
 
-- .NET SDK 8.0 以上（`dotnet --version` 應顯示 `8.0.x` 或更新）
-- Git
+| 項目 | 安裝 | 確認 |
+| --- | --- | --- |
+| .NET 8 SDK | `winget install Microsoft.DotNet.SDK.8` | `dotnet --version` 顯示 `8.0.x` 以上 |
+| Git | `winget install Git.Git` | `git --version` |
 
-安裝 .NET 8 SDK：
-
-| 平台 | 指令 |
-| --- | --- |
-| Windows 11 | `winget install Microsoft.DotNet.SDK.8` |
-| Ubuntu 24.04 | `sudo apt-get install -y dotnet-sdk-8.0` |
+裝完任何一項都要**關掉 PowerShell 重開**。
 
 ## 二、取得程式碼
 
-```bash
-git clone https://github.com/alexliu0914/remote_tool.git
+新程式在 `claude/sweet-gauss-x289io` 分支，要用 `-b` 指定：
+
+```powershell
+git clone -b claude/sweet-gauss-x289io https://github.com/alexliu0914/remote_tool.git
+```
+
+```powershell
 cd remote_tool
 ```
 
-## 三、Windows 11 上的完整測試（與 CI 相同）
+已經 clone 過的話，改用更新：
 
-```bash
-dotnet restore RemoteTool.sln
-dotnet build   RemoteTool.sln -c Release --no-restore
-dotnet test    RemoteTool.sln -c Release --no-build --verbosity normal
+```powershell
+git fetch origin
 ```
 
-預期：`Build succeeded. 0 Error(s)`，測試 `Passed: 7, Failed: 0`。
-
-啟動三個元件（目前只會印出骨架訊息）：
-
-```bash
-src\RemoteTool.Controller\bin\Release\net8.0-windows\Controller.exe
-src\RemoteTool.Host\bin\Release\net8.0-windows\Host.exe
-src\RemoteTool.HostGuard\bin\Release\net8.0-windows\HostGuard.exe
+```powershell
+git checkout claude/sweet-gauss-x289io
 ```
 
-## 四、Linux 上的測試
-
-協定庫與測試為 `net8.0`，可直接在 Linux 測：
-
-```bash
-dotnet test tests/RemoteTool.Protocol.Tests/RemoteTool.Protocol.Tests.csproj -c Release
+```powershell
+git pull
 ```
 
-三個應用程式為 `net8.0-windows`，在 Linux 上需加 `EnableWindowsTargeting` 才能建置：
+## 三、自動測試
 
-```bash
-dotnet build RemoteTool.sln -c Release -p:EnableWindowsTargeting=true
+```powershell
+dotnet build RemoteTool.sln -c Release
 ```
 
-目前的骨架只用到 Console，因此可在 Linux 以 `dotnet` 執行確認進入點正常
-（日後加入 WPF / Win32 / D3D11 後就只能在 Windows 上執行）：
-
-```bash
-dotnet src/RemoteTool.Controller/bin/Release/net8.0-windows/Controller.dll
-dotnet src/RemoteTool.Host/bin/Release/net8.0-windows/Host.dll
-dotnet src/RemoteTool.HostGuard/bin/Release/net8.0-windows/HostGuard.dll
-```
-
-## 五、單元測試涵蓋項目（`FrameCodecTests`）
-
-線路格式：`[Length 4B big-endian][Channel 1B][Type 1B][Payload N]`，Payload 上限 1 MB。
-
-| 測試 | 驗證內容 |
-| --- | --- |
-| `Encode_Then_Decode_RoundTrips` | 編碼後解碼，通道、類型、內容一致 |
-| `Encode_EmptyPayload_RoundTrips` | 空內容（如心跳）可正確往返 |
-| `TryDecode_IncompleteLengthPrefix_ReturnsFalse` | 長度欄位未收齊時回傳 false、不吃資料 |
-| `TryDecode_IncompleteBody_ReturnsFalse` | 內容未收齊時回傳 false、不吃資料 |
-| `TryDecode_TwoFramesInBuffer_ConsumesFirstOnly` | 緩衝區有兩個封包時只解第一個，可接續解第二個 |
-| `Encode_PayloadOverLimit_Throws` | 超過 1 MB 的內容拒絕編碼 |
-| `TryDecode_LengthOverLimit_Throws` | 偽造超大長度欄位時拋出 `InvalidDataException` |
-
-只跑單一測試：
-
-```bash
-dotnet test tests/RemoteTool.Protocol.Tests -c Release --filter "FullyQualifiedName~RoundTrips"
-```
-
-## 六、判定標準
-
-| 項目 | 通過條件 |
-| --- | --- |
-| 建置 | 0 Error |
-| 單元測試 | 7 / 7 Passed |
-| 元件啟動 | 三個程式皆印出「骨架」訊息並正常結束（exit code 0） |
-
-## 七、兩台 Windows 11 的實機測試
-
-> **目前骨架階段只需一台。** 三個程式尚不連網、不互相溝通，兩台都跑結果相同。
-> 以下步驟供連線功能（M1 起）完成後使用。
-
-### 7.1 角色分配
-
-| 電腦 | 稱呼 | 執行的程式 | 說明 |
-| --- | --- | --- | --- |
-| A：你操作的那台 | 控制端 | `Controller.exe` | 輸入被控端 IP、帳號、密碼，看遠端畫面並操作 |
-| B：被操控的那台 | 被控端 | `HostGuard.exe` + `Host.exe` | 以一般使用者權限執行，等待連線；依設計由 HostGuard 啟動並監看 Host |
-
-### 7.2 在一台電腦上建置並打包
-
-只需在一台裝有 .NET SDK 的電腦（例如 A）上執行。`--self-contained` 會把 .NET 執行環境一起打包，
-另一台**不需安裝 .NET**。
-
-```bash
+```powershell
 dotnet test RemoteTool.sln -c Release
 ```
 
-```bash
-dotnet publish src/RemoteTool.Controller -c Release -r win-x64 --self-contained -o publish\Controller
+預期兩行結果：
+
+```
+Passed!  - Failed: 0, Passed: 20 ... RemoteTool.Protocol.Tests.dll
+Passed!  - Failed: 0, Passed: 23 ... RemoteTool.Connection.Tests.dll
 ```
 
-```bash
+Connection 測試會在本機 127.0.0.1 實際建立 TLS 1.3 連線，涵蓋：登入成功與三條連線、帳密錯誤、
+失敗鎖定、拒絕陌生指紋時帳密不送出、指紋變更即中止、第二個控制端被拒、斷線後可重新登入、
+token 只能用一次且不能跨通道、心跳逾時、協定版本不符。
+
+## 四、單機實測（一台電腦，開兩個 PowerShell 視窗）
+
+先在 `remote_tool` 資料夾設定兩個捷徑變數。**每開一個新視窗都要重新設定一次**：
+
+```powershell
+$H = ".\src\RemoteTool.Host\bin\Release\net8.0-windows\Host.exe"
+```
+
+```powershell
+$C = ".\src\RemoteTool.Controller\bin\Release\net8.0-windows\Controller.exe"
+```
+
+### 4.1 設定被控端帳密（只需一次）
+
+```powershell
+& $H --setup
+```
+
+輸入帳號，密碼至少 8 字並輸入兩次。看到「已儲存」即完成。
+
+### 4.2 啟動被控端（視窗 A）
+
+```powershell
+& $H
+```
+
+畫面會顯示帳號、埠、本機 IP 與 **主機指紋**（4 行十六進位）。讓這個視窗保持開著。
+
+### 4.3 連線（視窗 B）
+
+```powershell
+& $C 127.0.0.1
+```
+
+依序輸入帳號、密碼。第一次會顯示指紋並問是否信任：**和視窗 A 的指紋逐字比對**，相同才輸入 `y`。
+
+成功時視窗 B 顯示「已連線並登入。Control / Video / File 三條連線皆已建立。」，之後每 5 秒顯示一行
+「連線中，心跳來回 N ms」。視窗 A 會出現「登入成功」與兩行「子連線已建立」。按 Enter 中斷。
+
+### 4.4 測試項目清單
+
+每項做完都在視窗 B 按 Enter 中斷（若仍連線中），再做下一項。
+
+| # | 操作 | 預期結果 |
+| --- | --- | --- |
+| 1 | 照 4.3 連線，指紋輸入 `y` | 連線成功，每 5 秒顯示心跳 |
+| 2 | 再連一次 | **不再詢問指紋**，直接連線成功 |
+| 3 | 輸入錯誤密碼 | 「登入失敗：帳號或密碼錯誤。」 |
+| 4 | 輸入錯誤帳號 | 同上（不會透露是帳號還是密碼錯） |
+| 5 | 保持一個視窗 B 連線中，另開視窗 C 再連 | 視窗 C 顯示「被控端已有其他控制端連線中。」 |
+| 6 | 連線中，在視窗 A 按 Ctrl+C 關閉被控端 | 視窗 B 數秒內顯示「連線結束：被控端已結束連線」 |
+| 7 | 視窗 A 重新 `& $H` 啟動後再連 | 成功（指紋沒變，不會詢問） |
+| 8 | 連續輸錯密碼 5 次，第 6 次輸入正確密碼 | 第 6 次顯示「失敗次數過多…暫時被鎖定」；5 分鐘後恢復，或重啟 Host 立即恢復 |
+| 9 | 第一次連線時，指紋問題回答 `n` | 「未信任此主機，已中止連線（帳密未送出）」；視窗 A 不會出現登入紀錄 |
+| 10 | 模擬憑證被換掉：關閉 Host，刪除 `%LOCALAPPDATA%\RemoteTool\host-cert.pfx`，重新啟動 Host 後再連 | 紅字「警告：主機指紋與上次不同！已中止連線，帳密未送出。」並列出新舊指紋 |
+| 11 | 接續第 10 項，執行 `& $C --forget 127.0.0.1` 後再連 | 重新詢問指紋（新指紋），輸入 `y` 後連線成功 |
+| 12 | 不開 Host，直接連 | 「連線失敗」並提示檢查 Host、IP、防火牆 |
+
+> 第 9 項：若之前已信任過 127.0.0.1，要先執行 `& $C --forget 127.0.0.1` 才會再被詢問。
+
+## 五、兩台 Windows 11 實測
+
+### 5.1 角色
+
+| 電腦 | 稱呼 | 執行 |
+| --- | --- | --- |
+| A：你操作的那台 | 控制端 | `Controller.exe` |
+| B：被操控的那台 | 被控端 | `Host.exe`（日後改由 `HostGuard.exe` 啟動並監看；目前直接執行 Host） |
+
+### 5.2 在 A 上打包
+
+`--self-contained` 會把 .NET 一起打包，B **不需安裝 .NET**：
+
+```powershell
 dotnet publish src/RemoteTool.Host -c Release -r win-x64 --self-contained -o publish\Host
 ```
 
-```bash
-dotnet publish src/RemoteTool.HostGuard -c Release -r win-x64 --self-contained -o publish\HostGuard
+```powershell
+dotnet publish src/RemoteTool.Controller -c Release -r win-x64 --self-contained -o publish\Controller
 ```
 
-產出：
+把整個 `publish\Host` 資料夾（不是只有 .exe）複製到 B，例如 `C:\RemoteTool\Host\`。
 
-| 資料夾 | 放到哪台 |
-| --- | --- |
-| `publish\Controller\` | A（控制端） |
-| `publish\Host\`、`publish\HostGuard\` | B（被控端） |
+### 5.3 B：開放防火牆（系統管理員 PowerShell，只需一次）
 
-把整個資料夾（不是只有 .exe）以隨身碟、網路芳鄰等方式複製到對應電腦，例如 B 的 `C:\RemoteTool\`。
+```powershell
+New-NetFirewallRule -DisplayName "RemoteTool 52100" -Direction Inbound -Protocol TCP -LocalPort 52100 -Action Allow -Profile Private
+```
 
-### 7.3 網路與防火牆
+兩台要在同一個區域網路，且 B 的網路設定檔為「私人」（設定 → 網路和網際網路 → 內容）。
+第一次執行 Host.exe 時若跳出 Windows 防火牆提示，也選「允許」（私人網路）。
 
-1. 查 B 的 IP：在 B 執行 `ipconfig`，記下「IPv4 位址」（例如 `192.168.1.20`）。
-2. 確認 A 連得到 B：在 A 執行 `ping 192.168.1.20`。
-   （Windows 預設會擋 ping；不通不一定代表網路不通，可接著測第 4 步。）
-3. 在 B 開放 TCP 52100 輸入連線（以系統管理員身分開 PowerShell，只需設定一次）：
-
-   ```powershell
-   New-NetFirewallRule -DisplayName "RemoteTool 52100" -Direction Inbound -Protocol TCP -LocalPort 52100 -Action Allow -Profile Private
-   ```
-
-   兩台應在同一個區域網路，且網路設定檔為「私人」。若 B 的網路是「公用」，請改為私人，
-   或把 `-Profile Private` 改成 `-Profile Any`（安全性較低）。
-4. B 啟動 Host 後，在 A 確認埠可連：
-
-   ```powershell
-   Test-NetConnection 192.168.1.20 -Port 52100
-   ```
-
-   `TcpTestSucceeded : True` 即表示網路與防火牆正常。
-
-移除防火牆規則（測試結束後）：
+測試結束後可移除：
 
 ```powershell
 Remove-NetFirewallRule -DisplayName "RemoteTool 52100"
 ```
 
-### 7.4 執行順序
+### 5.4 B：設定帳密並啟動
 
-1. **B（被控端）**：以一般使用者登入桌面（不支援登入前連線），執行 `C:\RemoteTool\HostGuard\HostGuard.exe`，
-   確認 Host 已啟動。
-2. **A（控制端）**：執行 `Controller.exe`，輸入 B 的 IP、被控端設定的帳號密碼。
-3. **首次連線**：核對 Controller 顯示的主機指紋 SHA-256(SPKI) 與 B 上顯示的是否一致，一致才接受。
-4. 依規劃書驗收項目逐項測試：畫面、鍵鼠、中英文輸入、雙向剪貼簿、雙向檔案與資料夾拖拉。
+```powershell
+cd C:\RemoteTool\Host
+```
 
-### 7.5 常見問題
+```powershell
+.\Host.exe --setup
+```
+
+```powershell
+.\Host.exe
+```
+
+記下畫面上的「本機 IP」（例如 `192.168.1.20`）與主機指紋。
+
+### 5.5 A：確認網路並連線
+
+```powershell
+Test-NetConnection 192.168.1.20 -Port 52100
+```
+
+`TcpTestSucceeded : True` 代表網路和防火牆正常。接著：
+
+```powershell
+.\publish\Controller\Controller.exe 192.168.1.20
+```
+
+核對指紋與 B 畫面相同後輸入 `y`。再依第四節 4.4 的清單測一遍（把 `127.0.0.1` 換成 B 的 IP）。
+額外加測：
+
+| # | 操作 | 預期結果 |
+| --- | --- | --- |
+| 13 | 連線中拔掉 B 的網路線或關閉 Wi-Fi | A 約 10 秒內顯示「連線結束：…心跳逾時」 |
+| 14 | 接續第 13 項，恢復 B 的網路後再連 | 成功（B 的工作階段也已因心跳逾時結束，不會顯示「已有其他控制端」） |
+
+### 5.6 常見問題
 
 | 狀況 | 檢查 |
 | --- | --- |
-| 連不上 | B 的 Host 是否在執行；`Test-NetConnection` 是否成功；IP 是否變動 |
+| 連線失敗 | B 的 Host 是否在執行；`Test-NetConnection` 是否成功；B 的 IP 是否變動 |
 | SmartScreen 擋下程式 | 自建、未簽章的程式會被提示，點「其他資訊」→「仍要執行」 |
-| 指紋與上次不同 | B 重新產生了憑證，或連到了別台電腦；確認原因前不要接受 |
-| 遠端鎖定 / UAC 視窗時無法操作 | 符合設計：安全桌面與鎖定狀態下不注入輸入 |
+| 「埠 52100 已被占用」 | 已經開了一個 Host；或用 `--port 52101` 改埠（兩邊都要加） |
+| 指紋與上次不同 | 先確認 B 是否刪過資料夾或重灌。**原因不明時不要 `--forget`** |
+
+## 六、判定標準
+
+| 項目 | 通過條件 |
+| --- | --- |
+| 建置 | 0 個錯誤 |
+| 自動測試 | 20 + 23 個全部通過 |
+| 單機實測 | 4.4 的 12 項全部符合預期 |
+| 兩台實測 | 4.4 的 12 項 + 5.5 的 2 項全部符合預期 |
+
+## 七、資料位置與重置
+
+兩個程式的資料都放在 `%LOCALAPPDATA%\RemoteTool`（只有目前 Windows 使用者能存取）：
+
+| 檔案 | 用途 |
+| --- | --- |
+| `host-cert.pfx` | 被控端憑證與私鑰。刪除後會產生新的，控制端會看到指紋變更警告 |
+| `host-credentials.json` | 被控端帳密（只有雜湊，沒有明文密碼）。重設請執行 `Host.exe --setup` |
+| `known-hosts.json` | 控制端信任過的主機指紋 |
+
+開啟資料夾：
+
+```powershell
+explorer $env:LOCALAPPDATA\RemoteTool
+```
+
+想用另一個資料夾測試（不影響原本設定），先設定環境變數，只對目前視窗有效：
+
+```powershell
+$env:REMOTETOOL_HOME = "C:\RemoteToolTest"
+```
 
 ## 八、尚未能測的項目
 
-實機驗收項目 G0-01～05 與 GUARD-01～05（擷取、編碼、輸入注入、HostGuard 監看與重啟等）
-需等對應功能於 Spike 0 / M1 實作後，於兩台 Windows 11 實機上依規劃書進行。
+遠端畫面、鍵鼠、中英文輸入、剪貼簿、檔案拖拉，以及規劃書的 G0-01～05、GUARD-01～05
+（擷取、編碼、輸入注入、HostGuard 監看與重啟），需等對應功能實作後再測。

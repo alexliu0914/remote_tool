@@ -12,6 +12,10 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RemoteTool.Controller", "sr
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RemoteTool.Protocol.Tests", "tests\RemoteTool.Protocol.Tests\RemoteTool.Protocol.Tests.csproj", "{55555555-5555-5555-5555-555555555555}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RemoteTool.Connection", "src\RemoteTool.Connection\RemoteTool.Connection.csproj", "{18E71667-7F67-4053-AD99-F13C410AE5EF}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RemoteTool.Connection.Tests", "tests\RemoteTool.Connection.Tests\RemoteTool.Connection.Tests.csproj", "{F53C2E2B-ACC1-4AFB-A95D-C7F7873B6D1B}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -38,5 +42,13 @@ Global
 		{55555555-5555-5555-5555-555555555555}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{55555555-5555-5555-5555-555555555555}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{55555555-5555-5555-5555-555555555555}.Release|Any CPU.Build.0 = Release|Any CPU
+		{18E71667-7F67-4053-AD99-F13C410AE5EF}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{18E71667-7F67-4053-AD99-F13C410AE5EF}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{18E71667-7F67-4053-AD99-F13C410AE5EF}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{18E71667-7F67-4053-AD99-F13C410AE5EF}.Release|Any CPU.Build.0 = Release|Any CPU
+		{F53C2E2B-ACC1-4AFB-A95D-C7F7873B6D1B}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{F53C2E2B-ACC1-4AFB-A95D-C7F7873B6D1B}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{F53C2E2B-ACC1-4AFB-A95D-C7F7873B6D1B}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{F53C2E2B-ACC1-4AFB-A95D-C7F7873B6D1B}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal

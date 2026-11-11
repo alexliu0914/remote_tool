@@ -13,6 +13,7 @@ public enum MessageType : byte
     SessionTokenGrant = 4,  // 子連線用的一次性 token
     SubConnectAuth = 5,     // Video / File 子連線出示 token
     Heartbeat = 6,
+    SubConnectResult = 7,   // 子連線 token 驗證結果
 
     // --- 工作階段狀態 (Control) ---
     SessionStateChanged = 10, // 鎖定 / 解鎖 / 登出 / 切換使用者 / UAC

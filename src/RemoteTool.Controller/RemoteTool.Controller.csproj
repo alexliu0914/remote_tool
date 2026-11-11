@@ -11,6 +11,11 @@
 
   <ItemGroup>
     <ProjectReference Include="..\RemoteTool.Protocol\RemoteTool.Protocol.csproj" />
+    <ProjectReference Include="..\RemoteTool.Connection\RemoteTool.Connection.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="..\Shared\ConsoleInput.cs" Link="Shared\ConsoleInput.cs" />
   </ItemGroup>
 
 </Project>

@@ -17,8 +17,8 @@ public static class FrameCodec
     /// <summary>Payload 位元組上限（1 MB）。</summary>
     public const int MaxPayloadSize = 1024 * 1024;
 
-    private const int LengthPrefixSize = 4;
-    private const int HeaderSize = 2; // Channel + Type
+    internal const int LengthPrefixSize = 4;
+    internal const int HeaderSize = 2; // Channel + Type
     private const int MaxLengthValue = HeaderSize + MaxPayloadSize;
 
     /// <summary>把一個封包序列化成位元組。</summary>
@@ -59,11 +59,7 @@ public static class FrameCodec
             return false;
 
         uint lengthValue = BinaryPrimitives.ReadUInt32BigEndian(buffer[..LengthPrefixSize]);
-
-        if (lengthValue < HeaderSize)
-            throw new InvalidDataException($"封包長度 {lengthValue} 小於標頭大小");
-        if (lengthValue > MaxLengthValue)
-            throw new InvalidDataException($"封包長度 {lengthValue} 超過上限 {MaxLengthValue}");
+        ValidateLength(lengthValue);
 
         int totalSize = LengthPrefixSize + (int)lengthValue;
         if (buffer.Length < totalSize)
@@ -78,5 +74,15 @@ public static class FrameCodec
         frame = new Frame(channel, type, payload);
         consumed = totalSize;
         return true;
+    }
+
+    /// <summary>檢查長度欄位是否在允許範圍內。</summary>
+    /// <exception cref="InvalidDataException">長度小於標頭或超過上限。</exception>
+    internal static void ValidateLength(uint lengthValue)
+    {
+        if (lengthValue < HeaderSize)
+            throw new InvalidDataException($"封包長度 {lengthValue} 小於標頭大小");
+        if (lengthValue > MaxLengthValue)
+            throw new InvalidDataException($"封包長度 {lengthValue} 超過上限 {MaxLengthValue}");
     }
 }

@@ -5,7 +5,7 @@
     不含擷取（DXGI 在 Host 專案），跨平台，可在 Linux 測試。
   -->
   <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>

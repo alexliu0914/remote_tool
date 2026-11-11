@@ -27,7 +27,7 @@ Windows 11 點對點遠端操控工具（自用）。控制端直接以 IP 連�
 
 ## 建置
 
-需要 .NET SDK 8.0 以上（規劃書指定 .NET 10，升級待決定，見 docs/PLAN_GAPS.md G-09）。
+需要 .NET SDK 10（`global.json` 指定 10.0.100 以上）。
 
 ```
 dotnet restore RemoteTool.sln
@@ -35,7 +35,7 @@ dotnet build   RemoteTool.sln -c Release
 dotnet test    RemoteTool.sln -c Release
 ```
 
-協定庫與其測試為 `net8.0`（跨平台），三個應用程式為 `net8.0-windows`，因此完整建置需在 Windows 上進行。CI 在 `windows-latest` 執行建置與測試。
+協定、連線、影像庫與其測試為 `net10.0`（跨平台），三個應用程式為 `net10.0-windows`，因此完整建置需在 Windows 上進行。CI 在 `windows-latest` 執行建置與測試。
 
 ## 現況
 

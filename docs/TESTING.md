@@ -21,7 +21,7 @@ A1 是 PoC（D-026、D-027）：畫面上限 10 FPS、寬 1920，**不代表正�
 
 | 項目 | 安裝 | 確認 |
 | --- | --- | --- |
-| .NET 8 SDK | `winget install Microsoft.DotNet.SDK.8` | `dotnet --version` 顯示 `8.0.x` 以上 |
+| .NET 10 SDK | `winget install Microsoft.DotNet.SDK.10` | `dotnet --version` 顯示 `10.0.x` |
 | Git | `winget install Git.Git` | `git --version` |
 
 裝完任何一項都要**關掉 PowerShell 重開**。
@@ -71,11 +71,11 @@ dotnet test RemoteTool.sln -c Release
 設定捷徑變數（**每開一個新 PowerShell 視窗都要重設**）：
 
 ```powershell
-$H = ".\src\RemoteTool.Host\bin\Release\net8.0-windows\Host.exe"
+$H = ".\src\RemoteTool.Host\bin\Release\net10.0-windows\Host.exe"
 ```
 
 ```powershell
-$C = ".\src\RemoteTool.Controller\bin\Release\net8.0-windows\Controller.exe"
+$C = ".\src\RemoteTool.Controller\bin\Release\net10.0-windows\Controller.exe"
 ```
 
 被控端帳密（之前設定過可略過）：

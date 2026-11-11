@@ -41,5 +41,5 @@ public static class HostCertificate
 
     // Windows 的 Schannel 不接受「暫時」私鑰，因此一律經由 PFX 匯入。
     private static X509Certificate2 Load(byte[] pfx)
-        => new(pfx, (string?)null, X509KeyStorageFlags.UserKeySet);
+        => X509CertificateLoader.LoadPkcs12(pfx, null, X509KeyStorageFlags.UserKeySet);
 }

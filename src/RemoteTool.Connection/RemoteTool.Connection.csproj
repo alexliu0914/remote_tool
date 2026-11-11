@@ -5,7 +5,7 @@
     只用 .NET 標準 API，跨平台，因此可在 Linux 上以真實 TLS 連線測試。
   -->
   <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>

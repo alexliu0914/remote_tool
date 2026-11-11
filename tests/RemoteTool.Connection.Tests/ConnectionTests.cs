@@ -41,14 +41,39 @@ public class ConnectionTests
     }
 
     [Fact]
-    public async Task TooManyFailures_LocksOut_EvenWithCorrectPassword()
+    public async Task FailedLogin_RequiresProgressiveWait_ButDoesNotLockOut()
     {
-        await using var host = new TestHost(new LoginThrottle(maxFailures: 3));
-        for (int i = 0; i < 3; i++)
-            await Assert.ThrowsAsync<AuthenticationFailedException>(() => ControllerClient.ConnectAsync(host.Options(pass: "wrong")));
+        await using var host = new TestHost(new LoginThrottle(baseDelay: TimeSpan.FromMilliseconds(600)));
+        await Assert.ThrowsAsync<AuthenticationFailedException>(() => ControllerClient.ConnectAsync(host.Options(pass: "wrong-password")));
 
+        // 等待期間：連正確密碼也先拒絕，並告知等待秒數
         var ex = await Assert.ThrowsAsync<AuthenticationFailedException>(() => ControllerClient.ConnectAsync(host.Options()));
         Assert.Equal(AuthError.TooManyAttempts, ex.Error);
+        Assert.True(ex.RetryAfterSeconds >= 1);
+
+        // 等待結束後即可登入（不是鎖定）
+        await Task.Delay(800);
+        await using var session = await ControllerClient.ConnectAsync(host.Options());
+        Assert.True(host.Server.HasActiveSession);
+    }
+
+    [Fact]
+    public async Task TooManyUnauthenticatedConnections_FromOneAddress_AreRefused()
+    {
+        await using var host = new TestHost(maxPendingPerAddress: 2);
+        using var a = new System.Net.Sockets.TcpClient();
+        using var b = new System.Net.Sockets.TcpClient();
+        await a.ConnectAsync("127.0.0.1", host.Server.Port);
+        await b.ConnectAsync("127.0.0.1", host.Server.Port);
+        await Task.Delay(200);
+
+        using var c = new System.Net.Sockets.TcpClient();
+        await c.ConnectAsync("127.0.0.1", host.Server.Port);
+        var buffer = new byte[1];
+        using var cts = new CancellationTokenSource(5000);
+        int n = await c.GetStream().ReadAsync(buffer, cts.Token); // 被控端立即關閉 → 讀到 0
+        Assert.Equal(0, n);
+        await TestHost.WaitUntilAsync(() => host.Logs.Any(l => l.Contains("未驗證連線過多")));
     }
 
     [Fact]

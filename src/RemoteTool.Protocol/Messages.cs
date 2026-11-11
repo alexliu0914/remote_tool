@@ -16,7 +16,7 @@ public enum AuthError
     None = 0,
     /// <summary>帳號或密碼錯誤。</summary>
     BadCredentials = 1,
-    /// <summary>此來源失敗次數過多，暫時鎖定。</summary>
+    /// <summary>此來源需等待（漸進延遲）或全域節流中，稍後再試。</summary>
     TooManyAttempts = 2,
     /// <summary>被控端已有其他控制端連線中。</summary>
     Busy = 3,
@@ -45,10 +45,12 @@ public sealed record LoginRequest(
     public static MessageType Type => MessageType.LoginRequest;
 }
 
+/// <summary>登入結果。<see cref="RetryAfterSeconds"/> 在 TooManyAttempts 時為建議等待秒數。</summary>
 [MessagePackObject]
 public sealed record LoginResult(
     [property: Key(0)] bool Success,
-    [property: Key(1)] AuthError Error) : IMessage
+    [property: Key(1)] AuthError Error,
+    [property: Key(2)] int RetryAfterSeconds) : IMessage
 {
     public static MessageType Type => MessageType.LoginResult;
 }

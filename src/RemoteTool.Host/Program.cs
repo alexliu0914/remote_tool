@@ -9,7 +9,7 @@ using RemoteTool.Video;
 
 // 被控端（遠端電腦）進入點。
 //
-// 目前完成：TLS 1.3 監聽、自簽憑證與 SPKI 指紋、帳密（PBKDF2）、登入失敗鎖定、
+// 目前完成：TLS 1.3 監聽、自簽憑證與 SPKI 指紋、帳密（Argon2id）、登入節流（漸進延遲 + 全域節流 + 連線上限）、
 // 三條連線（Control / Video / File）與一次性 Session Token、心跳；
 // A1：DXGI 擷取主螢幕，以區塊差異 + Deflate 經 Video 連線送出（PoC，見 D-027）。
 //
@@ -83,10 +83,10 @@ static class HostProgram
             return 1;
         }
 
-        string pass = ConsoleInput.PromptSecret("密碼（至少 8 字）：");
-        if (pass.Length < 8 || pass.Length > ProtocolInfo.MaxPasswordLength)
+        string pass = ConsoleInput.PromptSecret($"密碼（至少 {PasswordHasher.MinPasswordLength} 字）：");
+        if (pass.Length < PasswordHasher.MinPasswordLength || pass.Length > ProtocolInfo.MaxPasswordLength)
         {
-            Console.Error.WriteLine("密碼長度須為 8 ~ 1024 字。");
+            Console.Error.WriteLine($"密碼長度須為 {PasswordHasher.MinPasswordLength} ~ {ProtocolInfo.MaxPasswordLength} 字。");
             return 1;
         }
         if (ConsoleInput.PromptSecret("再輸入一次密碼：") != pass)
@@ -95,8 +95,12 @@ static class HostProgram
             return 1;
         }
 
-        CredentialStore.Save(AppPaths.HostCredentialsFile, PasswordHasher.Create(user, pass));
-        Console.WriteLine($"已儲存（只存雜湊，不存明文）：{AppPaths.HostCredentialsFile}");
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var record = PasswordHasher.Create(user, pass);
+        sw.Stop();
+        CredentialStore.Save(AppPaths.HostCredentialsFile, record);
+        Console.WriteLine($"已儲存（Argon2id，只存雜湊與隨機鹽，不存明文）：{AppPaths.HostCredentialsFile}");
+        Console.WriteLine($"雜湊參數：記憶體 {record.MemoryKiB} KiB、次數 {record.Iterations}、平行度 {record.Parallelism}；本機耗時 {sw.ElapsedMilliseconds} ms");
         return 0;
     }
 
@@ -120,7 +124,21 @@ static class HostProgram
 
     private static async Task<int> ServeAsync(int port, VideoStreamerOptions video)
     {
-        var credentials = CredentialStore.Load(AppPaths.HostCredentialsFile);
+        CredentialRecord? credentials;
+        try
+        {
+            credentials = CredentialStore.Load(AppPaths.HostCredentialsFile);
+        }
+        catch (CredentialFormatException ex)
+        {
+            Console.Error.WriteLine(ex.Message);
+            return 1;
+        }
+        catch (InvalidDataException ex)
+        {
+            Console.Error.WriteLine($"帳密檔內容不合法（{ex.Message}），請重新執行 Host.exe --setup。");
+            return 1;
+        }
         if (credentials is null)
         {
             Console.Error.WriteLine("尚未設定帳號密碼，請先執行：Host.exe --setup");

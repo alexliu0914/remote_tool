@@ -20,9 +20,16 @@ public sealed class HostServerOptions
     public TimeSpan HandshakeTimeout { get; init; } = TimeSpan.FromSeconds(15);
     /// <summary>Control 連線多久沒收到心跳就結束工作階段。</summary>
     public TimeSpan HeartbeatTimeout { get; init; } = TimeSpan.FromSeconds(10);
-    /// <summary>登入失敗後的延遲，拖慢暴力猜測。</summary>
-    public TimeSpan FailedLoginDelay { get; init; } = TimeSpan.FromMilliseconds(500);
+    /// <summary>登入節流：每來源漸進延遲 + 全域節流（PLAN §6）。</summary>
     public LoginThrottle Throttle { get; init; } = new();
+    /// <summary>尚未完成登入 / 子連線驗證的連線總數上限（同時連線上限，PLAN §6）。</summary>
+    public int MaxPendingConnections { get; init; } = 32;
+    /// <summary>同一來源尚未完成驗證的連線數上限。</summary>
+    public int MaxPendingConnectionsPerAddress { get; init; } = 4;
+    /// <summary>同時進行的 Argon2id 比對上限（每次約 19 MiB 記憶體）。</summary>
+    public int MaxConcurrentPasswordChecks { get; init; } = 2;
+    /// <summary>僅供測試：允許低於正式下限的 Argon2 參數。</summary>
+    public bool AllowWeakCredentialParameters { get; init; }
     public Action<string>? Log { get; init; }
 
     /// <summary>
@@ -66,11 +73,15 @@ public sealed class HostServer : IAsyncDisposable
     private HostSession? _session;
     private Task? _acceptLoop;
     private int _loginAttempts;
+    private readonly SemaphoreSlim _passwordChecks;
+    private readonly Dictionary<IPAddress, int> _pendingPerAddress = new();
+    private int _pendingTotal;
 
     public HostServer(HostServerOptions options)
     {
         _options = options;
         _listener = new TcpListener(options.BindAddress, options.Port);
+        _passwordChecks = new SemaphoreSlim(Math.Max(1, options.MaxConcurrentPasswordChecks));
         Fingerprint = Connection.Fingerprint.Compute(options.Certificate);
     }
 
@@ -125,15 +136,54 @@ public sealed class HostServer : IAsyncDisposable
                 continue;
             }
 
-            _ = Task.Run(() => HandleConnectionAsync(client));
+            var address = Normalize(((IPEndPoint)client.Client.RemoteEndPoint!).Address);
+            if (!TryAddPending(address))
+            {
+                Log($"{address}：未驗證連線過多，拒絕");
+                client.Dispose();
+                continue;
+            }
+            _ = Task.Run(() => HandleConnectionAsync(client, address));
         }
     }
 
-    private async Task HandleConnectionAsync(TcpClient client)
+    private static IPAddress Normalize(IPAddress a) => a.IsIPv4MappedToIPv6 ? a.MapToIPv4() : a;
+
+    private bool TryAddPending(IPAddress address)
+    {
+        lock (_gate)
+        {
+            _pendingPerAddress.TryGetValue(address, out int n);
+            if (_pendingTotal >= _options.MaxPendingConnections || n >= _options.MaxPendingConnectionsPerAddress)
+                return false;
+            _pendingPerAddress[address] = n + 1;
+            _pendingTotal++;
+            return true;
+        }
+    }
+
+    /// <summary>連線完成驗證或結束時呼叫一次，釋放「未驗證連線」名額。</summary>
+    private void ReleasePending(IPAddress address, ref bool released)
+    {
+        if (released) return;
+        released = true;
+        lock (_gate)
+        {
+            _pendingTotal--;
+            if (_pendingPerAddress.TryGetValue(address, out int n))
+            {
+                if (n <= 1) _pendingPerAddress.Remove(address);
+                else _pendingPerAddress[address] = n - 1;
+            }
+        }
+    }
+
+    private async Task HandleConnectionAsync(TcpClient client, IPAddress address)
     {
         var remote = (IPEndPoint)client.Client.RemoteEndPoint!;
         using var _ = client;
         client.NoDelay = true;
+        var pending = new PendingSlot(this, address);
 
         try
         {
@@ -171,9 +221,9 @@ public sealed class HostServer : IAsyncDisposable
             await stream.WriteAsync(hello.Channel, new Hello(ProtocolInfo.Version, hello.Channel), hct).ConfigureAwait(false);
 
             if (hello.Channel == ChannelKind.Control)
-                await RunControlAsync(stream, remote, hct).ConfigureAwait(false);
+                await RunControlAsync(stream, remote, pending, hct).ConfigureAwait(false);
             else
-                await RunSubChannelAsync(stream, hello.Channel, remote, hct).ConfigureAwait(false);
+                await RunSubChannelAsync(stream, hello.Channel, remote, pending, hct).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (!_cts.IsCancellationRequested)
         {
@@ -186,24 +236,32 @@ public sealed class HostServer : IAsyncDisposable
         {
             Log($"{remote}：連線結束（{ex.GetType().Name}: {ex.Message}）");
         }
+        finally
+        {
+            pending.Release();
+        }
     }
 
-    private async Task RunControlAsync(FrameStream stream, IPEndPoint remote, CancellationToken handshakeToken)
+    /// <summary>一條連線佔用的「未驗證連線」名額；驗證成功或連線結束時釋放（只釋放一次）。</summary>
+    private sealed class PendingSlot(HostServer server, IPAddress address)
+    {
+        private bool _released;
+        public void Release() => server.ReleasePending(address, ref _released);
+    }
+
+    private async Task RunControlAsync(FrameStream stream, IPEndPoint remote, PendingSlot pending, CancellationToken handshakeToken)
     {
         var login = await stream.ReadMessageAsync<LoginRequest>(ChannelKind.Control, handshakeToken).ConfigureAwait(false);
         Interlocked.Increment(ref _loginAttempts);
 
-        AuthError error = CheckLogin(login, remote.Address);
+        var (error, retryAfter) = await CheckLoginAsync(login, remote.Address, handshakeToken).ConfigureAwait(false);
         if (error == AuthError.BadCredentials)
-        {
             _options.Throttle.RecordFailure(remote.Address);
-            await Task.Delay(_options.FailedLoginDelay, handshakeToken).ConfigureAwait(false);
-        }
 
         HostSession? session = null;
         if (error == AuthError.None)
         {
-            _options.Throttle.Reset(remote.Address);
+            _options.Throttle.RecordSuccess(remote.Address);
             lock (_gate)
             {
                 if (_session is not null) error = AuthError.Busy;
@@ -213,14 +271,17 @@ public sealed class HostServer : IAsyncDisposable
 
         if (session is null)
         {
-            await stream.WriteAsync(ChannelKind.Control, new LoginResult(false, error), handshakeToken).ConfigureAwait(false);
-            Log($"{remote}：登入被拒（{error}）");
+            int seconds = (int)Math.Ceiling(retryAfter.TotalSeconds);
+            await stream.WriteAsync(ChannelKind.Control, new LoginResult(false, error, seconds), handshakeToken).ConfigureAwait(false);
+            // 只記來源與原因，不記錄輸入的帳號或密碼（PLAN §6）
+            Log($"{remote}：登入被拒（{error}{(seconds > 0 ? $"，{seconds} 秒後可再試" : "")}）");
             return;
         }
 
+        pending.Release();
         try
         {
-            await stream.WriteAsync(ChannelKind.Control, new LoginResult(true, AuthError.None), handshakeToken).ConfigureAwait(false);
+            await stream.WriteAsync(ChannelKind.Control, new LoginResult(true, AuthError.None, 0), handshakeToken).ConfigureAwait(false);
             foreach (var channel in SubChannels)
             {
                 await stream.WriteAsync(ChannelKind.Control,
@@ -245,16 +306,28 @@ public sealed class HostServer : IAsyncDisposable
         }
     }
 
-    private AuthError CheckLogin(LoginRequest login, IPAddress address)
+    private async Task<(AuthError Error, TimeSpan RetryAfter)> CheckLoginAsync(LoginRequest login, IPAddress address, CancellationToken ct)
     {
-        if (_options.Throttle.IsBlocked(address)) return AuthError.TooManyAttempts;
+        if (!_options.Throttle.TryBegin(address, out var retryAfter))
+            return (AuthError.TooManyAttempts, retryAfter);
         if (login.Username is null || login.Password is null
             || login.Username.Length > ProtocolInfo.MaxUsernameLength
             || login.Password.Length > ProtocolInfo.MaxPasswordLength)
-            return AuthError.BadCredentials;
-        return PasswordHasher.Verify(_options.Credentials, login.Username, login.Password)
-            ? AuthError.None
-            : AuthError.BadCredentials;
+            return (AuthError.BadCredentials, TimeSpan.Zero);
+
+        // Argon2id 很吃記憶體，限制同時比對數量；等不到就請對方稍後再試。
+        if (!await _passwordChecks.WaitAsync(TimeSpan.FromSeconds(5), ct).ConfigureAwait(false))
+            return (AuthError.TooManyAttempts, TimeSpan.FromSeconds(1));
+        try
+        {
+            bool ok = await Task.Run(() => PasswordHasher.Verify(_options.Credentials, login.Username, login.Password,
+                _options.AllowWeakCredentialParameters), ct).ConfigureAwait(false);
+            return (ok ? AuthError.None : AuthError.BadCredentials, TimeSpan.Zero);
+        }
+        finally
+        {
+            _passwordChecks.Release();
+        }
     }
 
     private async Task RunHeartbeatLoopAsync(FrameStream stream, HostSession session)
@@ -312,7 +385,7 @@ public sealed class HostServer : IAsyncDisposable
         }
     }
 
-    private async Task RunSubChannelAsync(FrameStream stream, ChannelKind channel, IPEndPoint remote, CancellationToken handshakeToken)
+    private async Task RunSubChannelAsync(FrameStream stream, ChannelKind channel, IPEndPoint remote, PendingSlot pending, CancellationToken handshakeToken)
     {
         var auth = await stream.ReadMessageAsync<SubConnectAuth>(channel, handshakeToken).ConfigureAwait(false);
 
@@ -326,6 +399,7 @@ public sealed class HostServer : IAsyncDisposable
             return;
         }
 
+        pending.Release();
         using var subCts = CancellationTokenSource.CreateLinkedTokenSource(session.Token);
         session.AttachSubChannel(channel, subCts);
         try

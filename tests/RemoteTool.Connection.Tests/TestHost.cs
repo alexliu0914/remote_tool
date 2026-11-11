@@ -20,18 +20,24 @@ internal sealed class TestHost : IAsyncDisposable
     public HostServer Server { get; }
     public List<string> Logs { get; } = new();
 
-    public TestHost(LoginThrottle? throttle = null, TimeSpan? heartbeatTimeout = null, TimeSpan? handshakeTimeout = null)
+    /// <summary>測試用的弱 Argon2 參數，讓測試快速執行（正式參數另有測試）。</summary>
+    public static readonly Argon2Parameters WeakArgon2 = new(MemoryKiB: 256, Iterations: 1, Parallelism: 1);
+
+    public TestHost(LoginThrottle? throttle = null, TimeSpan? heartbeatTimeout = null, TimeSpan? handshakeTimeout = null,
+        int maxPendingPerAddress = 4)
     {
         Server = new HostServer(new HostServerOptions
         {
             Certificate = SharedCert,
-            Credentials = PasswordHasher.Create(User, Pass, iterations: 1000),
+            Credentials = PasswordHasher.Create(User, Pass, WeakArgon2, allowWeakParameters: true),
+            AllowWeakCredentialParameters = true,
+            MaxPendingConnectionsPerAddress = maxPendingPerAddress,
             BindAddress = IPAddress.Loopback,
             Port = 0,
-            FailedLoginDelay = TimeSpan.Zero,
             HeartbeatTimeout = heartbeatTimeout ?? TimeSpan.FromSeconds(10),
             HandshakeTimeout = handshakeTimeout ?? TimeSpan.FromSeconds(15),
-            Throttle = throttle ?? new LoginThrottle(),
+            // 預設不延遲，避免測試互相干擾；節流行為另有專門測試。
+            Throttle = throttle ?? new LoginThrottle(baseDelay: TimeSpan.Zero, globalBurst: 1000, globalPerSecond: 1000),
             Log = m => { lock (Logs) Logs.Add(m); },
         });
         Server.Start();

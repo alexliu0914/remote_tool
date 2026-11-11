@@ -79,7 +79,7 @@ public static class ControllerClient
             await control.WriteAsync(ChannelKind.Control, new LoginRequest(options.Username, options.Password), ct).ConfigureAwait(false);
             var result = await control.ReadMessageAsync<LoginResult>(ChannelKind.Control, ct).ConfigureAwait(false);
             if (!result.Success)
-                throw new AuthenticationFailedException(result.Error);
+                throw new AuthenticationFailedException(result.Error, result.RetryAfterSeconds);
 
             var tokens = new Dictionary<ChannelKind, byte[]>();
             while (tokens.Count < 2)

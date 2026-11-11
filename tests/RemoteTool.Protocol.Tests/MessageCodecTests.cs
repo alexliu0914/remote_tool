@@ -30,7 +30,7 @@ public class MessageCodecTests
     [Fact]
     public void LoginResult_RoundTrips()
     {
-        var msg = new LoginResult(false, AuthError.TooManyAttempts);
+        var msg = new LoginResult(false, AuthError.TooManyAttempts, 30);
         Assert.Equal(msg, RoundTrip(ChannelKind.Control, msg));
     }
 

@@ -39,7 +39,7 @@ internal sealed class FakeCapture : IScreenCapture
 
 public class StreamingTests
 {
-    private const string User = "u", Pass = "password1";
+    private const string User = "u", Pass = "password123";
 
     private static (HostServer Server, FakeCapture Capture) StartHost(VideoStreamerOptions? options = null)
     {
@@ -47,7 +47,8 @@ public class StreamingTests
         var server = new HostServer(new HostServerOptions
         {
             Certificate = HostCertificate.CreateEphemeral(),
-            Credentials = PasswordHasher.Create(User, Pass, 1000),
+            Credentials = PasswordHasher.Create(User, Pass, new Argon2Parameters(256, 1, 1), allowWeakParameters: true),
+            AllowWeakCredentialParameters = true,
             BindAddress = IPAddress.Loopback,
             Port = 0,
             SubChannelHandler = ctx => ctx.Channel == ChannelKind.Video

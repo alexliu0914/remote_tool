@@ -20,15 +20,18 @@ public sealed class FingerprintRejectedException(string hostKey, string fingerpr
 }
 
 /// <summary>登入或子連線驗證被拒。</summary>
-public sealed class AuthenticationFailedException(AuthError error)
-    : Exception(Describe(error))
+public sealed class AuthenticationFailedException(AuthError error, int retryAfterSeconds = 0)
+    : Exception(Describe(error, retryAfterSeconds))
 {
     public AuthError Error { get; } = error;
+    public int RetryAfterSeconds { get; } = retryAfterSeconds;
 
-    public static string Describe(AuthError error) => error switch
+    public static string Describe(AuthError error, int retryAfterSeconds = 0) => error switch
     {
         AuthError.BadCredentials => "帳號或密碼錯誤。",
-        AuthError.TooManyAttempts => "失敗次數過多，此來源暫時被鎖定，請稍後再試。",
+        AuthError.TooManyAttempts => retryAfterSeconds > 0
+            ? $"嘗試太頻繁，請 {retryAfterSeconds} 秒後再試。"
+            : "嘗試太頻繁，請稍後再試。",
         AuthError.Busy => "被控端已有其他控制端連線中。",
         AuthError.InvalidToken => "子連線 token 無效。",
         _ => $"驗證失敗（{error}）。",

@@ -4,6 +4,7 @@ using System.Net.Sockets;
 using System.Security.Authentication;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
+using System.Threading.Channels;
 using RemoteTool.Protocol;
 
 namespace RemoteTool.Connection;
@@ -23,6 +24,26 @@ public sealed class HostServerOptions
     public TimeSpan FailedLoginDelay { get; init; } = TimeSpan.FromMilliseconds(500);
     public LoginThrottle Throttle { get; init; } = new();
     public Action<string>? Log { get; init; }
+
+    /// <summary>
+    /// Video / File 子連線驗證成功後呼叫，負責該通道的資料（例如影像串流）。
+    /// 回傳的 Task 結束或連線中斷時，子連線關閉。null 表示不處理（只接收並丟棄）。
+    /// </summary>
+    public Func<SubChannelContext, Task>? SubChannelHandler { get; init; }
+}
+
+/// <summary>交給 <see cref="HostServerOptions.SubChannelHandler"/> 的子連線。</summary>
+public sealed class SubChannelContext(ChannelKind channel, FrameStream stream, ChannelReader<Frame> incoming,
+    IPEndPoint remote, CancellationToken token)
+{
+    public ChannelKind Channel { get; } = channel;
+    /// <summary>用來送出封包（可與讀取並行）。不要從這裡讀取，對方送來的封包在 <see cref="Incoming"/>。</summary>
+    public FrameStream Stream { get; } = stream;
+    /// <summary>對方送來、已檢查通道的封包。</summary>
+    public ChannelReader<Frame> Incoming { get; } = incoming;
+    public IPEndPoint Remote { get; } = remote;
+    /// <summary>子連線或工作階段結束時取消。</summary>
+    public CancellationToken Token { get; } = token;
 }
 
 /// <summary>
@@ -315,14 +336,7 @@ public sealed class HostServer : IAsyncDisposable
                 new SessionTokenGrant(channel, session.IssueToken(channel)), session.Token).ConfigureAwait(false);
             Log($"{remote}：{channel} 子連線已建立");
 
-            while (true)
-            {
-                Frame? frame = await stream.ReadAsync(subCts.Token).ConfigureAwait(false);
-                if (frame is null) break;
-                if (frame.Value.Channel != channel)
-                    throw new ProtocolViolationException($"{channel} 連線收到 {frame.Value.Channel} 封包");
-                // 影像 / 檔案資料於後續里程碑實作，目前忽略。
-            }
+            await RunSubChannelDataAsync(stream, channel, remote, subCts).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (subCts.IsCancellationRequested && !_cts.IsCancellationRequested)
         {
@@ -333,6 +347,57 @@ public sealed class HostServer : IAsyncDisposable
             session.DetachSubChannel(channel, subCts);
             Log($"{remote}：{channel} 子連線結束");
         }
+    }
+
+    /// <summary>讀取迴圈與 <see cref="HostServerOptions.SubChannelHandler"/> 並行；任一方結束即關閉子連線。</summary>
+    private async Task RunSubChannelDataAsync(FrameStream stream, ChannelKind channel, IPEndPoint remote, CancellationTokenSource subCts)
+    {
+        var handler = _options.SubChannelHandler;
+        var incoming = Channel.CreateBounded<Frame>(new BoundedChannelOptions(64)
+        {
+            FullMode = BoundedChannelFullMode.Wait,
+            SingleReader = true,
+            SingleWriter = true,
+        });
+
+        async Task ReadLoopAsync()
+        {
+            try
+            {
+                while (true)
+                {
+                    Frame? frame = await stream.ReadAsync(subCts.Token).ConfigureAwait(false);
+                    if (frame is null) return;
+                    if (frame.Value.Channel != channel)
+                        throw new ProtocolViolationException($"{channel} 連線收到 {frame.Value.Channel} 封包");
+                    if (!MessageCodec.IsKnownType(frame.Value.Type))
+                        throw new ProtocolViolationException($"未知訊息類型 {(byte)frame.Value.Type}");
+                    if (handler is not null)
+                        await incoming.Writer.WriteAsync(frame.Value, subCts.Token).ConfigureAwait(false);
+                }
+            }
+            finally
+            {
+                incoming.Writer.TryComplete();
+            }
+        }
+
+        var readTask = ReadLoopAsync();
+        var handlerTask = handler is null
+            ? Task.Delay(Timeout.Infinite, subCts.Token)
+            : Task.Run(() => handler(new SubChannelContext(channel, stream, incoming.Reader, remote, subCts.Token)));
+
+        await Task.WhenAny(readTask, handlerTask).ConfigureAwait(false);
+        try { subCts.Cancel(); } catch (ObjectDisposedException) { }
+
+        try { await handlerTask.ConfigureAwait(false); }
+        catch (OperationCanceledException) { }
+        catch (Exception ex) when (handler is not null)
+        {
+            Log($"{remote}：{channel} 處理發生錯誤（{ex.GetType().Name}: {ex.Message}）");
+        }
+
+        await readTask.ConfigureAwait(false); // 讀取端的例外交給上層記錄
     }
 
     /// <summary>一個已登入的工作階段：Control 連線、一次性 token、子連線。</summary>

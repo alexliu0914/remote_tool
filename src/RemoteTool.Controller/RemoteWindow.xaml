@@ -1,0 +1,28 @@
+<Window x:Class="RemoteTool.Controller.RemoteWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="RemoteTool" Width="1280" Height="800" Background="#202020"
+        WindowStartupLocation="CenterScreen">
+    <DockPanel>
+        <ToolBar DockPanel.Dock="Top">
+            <CheckBox x:Name="FitCheck" Content="符合視窗大小" IsChecked="True" Margin="4,0"
+                      Checked="OnFitChanged" Unchecked="OnFitChanged" />
+            <Separator />
+            <Button Content="重新整理畫面" Click="OnRefresh" ToolTip="要求被控端重送完整畫面" />
+            <Separator />
+            <Button Content="中斷連線" Click="OnDisconnect" />
+        </ToolBar>
+
+        <StatusBar DockPanel.Dock="Bottom">
+            <StatusBarItem>
+                <TextBlock x:Name="StatusText" Text="等待畫面…" />
+            </StatusBarItem>
+        </StatusBar>
+
+        <ScrollViewer x:Name="Scroller" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Disabled"
+                      Background="Black">
+            <Image x:Name="ScreenImage" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality"
+                   HorizontalAlignment="Center" VerticalAlignment="Center" />
+        </ScrollViewer>
+    </DockPanel>
+</Window>

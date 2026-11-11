@@ -1,4 +1,4 @@
-Microsoft Visual Studio Solution File, Format Version 12.00
+﻿Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 VisualStudioVersion = 17.0.31903.59
 MinimumVisualStudioVersion = 10.0.40219.1
@@ -15,6 +15,14 @@ EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RemoteTool.Connection", "src\RemoteTool.Connection\RemoteTool.Connection.csproj", "{18E71667-7F67-4053-AD99-F13C410AE5EF}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RemoteTool.Connection.Tests", "tests\RemoteTool.Connection.Tests\RemoteTool.Connection.Tests.csproj", "{F53C2E2B-ACC1-4AFB-A95D-C7F7873B6D1B}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{3615C565-16AB-4A58-979E-C97124F5B0E1}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RemoteTool.Video", "src\RemoteTool.Video\RemoteTool.Video.csproj", "{AABFF51D-E770-4FA1-9559-182D89C315F1}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{3362076F-C415-4897-B07E-0832E2AA2C12}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RemoteTool.Video.Tests", "tests\RemoteTool.Video.Tests\RemoteTool.Video.Tests.csproj", "{690B2BD6-F9D8-4B77-B1E3-7EE3F63FD7F4}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -50,5 +58,17 @@ Global
 		{F53C2E2B-ACC1-4AFB-A95D-C7F7873B6D1B}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{F53C2E2B-ACC1-4AFB-A95D-C7F7873B6D1B}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{F53C2E2B-ACC1-4AFB-A95D-C7F7873B6D1B}.Release|Any CPU.Build.0 = Release|Any CPU
+		{AABFF51D-E770-4FA1-9559-182D89C315F1}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{AABFF51D-E770-4FA1-9559-182D89C315F1}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{AABFF51D-E770-4FA1-9559-182D89C315F1}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{AABFF51D-E770-4FA1-9559-182D89C315F1}.Release|Any CPU.Build.0 = Release|Any CPU
+		{690B2BD6-F9D8-4B77-B1E3-7EE3F63FD7F4}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{690B2BD6-F9D8-4B77-B1E3-7EE3F63FD7F4}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{690B2BD6-F9D8-4B77-B1E3-7EE3F63FD7F4}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{690B2BD6-F9D8-4B77-B1E3-7EE3F63FD7F4}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{AABFF51D-E770-4FA1-9559-182D89C315F1} = {3615C565-16AB-4A58-979E-C97124F5B0E1}
+		{690B2BD6-F9D8-4B77-B1E3-7EE3F63FD7F4} = {3362076F-C415-4897-B07E-0832E2AA2C12}
 	EndGlobalSection
 EndGlobal

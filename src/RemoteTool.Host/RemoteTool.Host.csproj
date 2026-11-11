@@ -5,6 +5,7 @@
     <TargetFramework>net8.0-windows</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <AssemblyName>Host</AssemblyName>
     <RootNamespace>RemoteTool.Host</RootNamespace>
   </PropertyGroup>
@@ -12,6 +13,13 @@
   <ItemGroup>
     <ProjectReference Include="..\RemoteTool.Protocol\RemoteTool.Protocol.csproj" />
     <ProjectReference Include="..\RemoteTool.Connection\RemoteTool.Connection.csproj" />
+    <ProjectReference Include="..\RemoteTool.Video\RemoteTool.Video.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- DXGI Desktop Duplication / D3D11（D-030） -->
+    <PackageReference Include="Vortice.Direct3D11" Version="3.8.3" />
+    <PackageReference Include="Vortice.DXGI" Version="3.8.3" />
   </ItemGroup>
 
   <ItemGroup>

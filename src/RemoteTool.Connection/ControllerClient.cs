@@ -25,6 +25,9 @@ public sealed class ControllerConnectOptions
     public TimeSpan HeartbeatInterval { get; init; } = TimeSpan.FromSeconds(2);
     /// <summary>多久沒收到被控端的心跳回覆就判定斷線。</summary>
     public TimeSpan HeartbeatTimeout { get; init; } = TimeSpan.FromSeconds(10);
+
+    /// <summary>收到 Video 封包時呼叫（在背景執行緒）。拋出例外會結束工作階段。</summary>
+    public Action<Frame>? VideoFrameReceived { get; init; }
 }
 
 /// <summary>
@@ -55,9 +58,20 @@ public static class ControllerClient
 
             if (known is null)
             {
-                if (!options.ConfirmNewHost(hostKey, fingerprint))
+                // 使用者核對指紋可能很久，超過被控端的握手時限；因此暫停逾時，
+                // 確認後關閉這條探測連線，以已釘選的指紋重新連線。
+                connectCts.CancelAfter(Timeout.InfiniteTimeSpan);
+                bool trusted = options.ConfirmNewHost(hostKey, fingerprint);
+                await control.DisposeAsync().ConfigureAwait(false);
+                opened.Remove(control);
+                if (!trusted)
                     throw new FingerprintRejectedException(hostKey, fingerprint);
                 options.KnownHosts.Set(hostKey, fingerprint);
+
+                connectCts.CancelAfter(options.ConnectTimeout);
+                ct.ThrowIfCancellationRequested();
+                (control, _) = await OpenTlsAsync(options.Host, options.Port, fingerprint, hostKey, ct).ConfigureAwait(false);
+                opened.Add(control);
             }
 
             // 3. Hello 與登入
@@ -233,8 +247,8 @@ public sealed class ControllerSession : IAsyncDisposable
     {
         _loops = Task.WhenAll(
             RunAsync(ControlLoopAsync, "Control"),
-            RunAsync(ct => DrainAsync(VideoChannel, ChannelKind.Video, ct), "Video"),
-            RunAsync(ct => DrainAsync(FileChannel, ChannelKind.File, ct), "File"));
+            RunAsync(ct => DrainAsync(VideoChannel, ChannelKind.Video, _options.VideoFrameReceived, ct), "Video"),
+            RunAsync(ct => DrainAsync(FileChannel, ChannelKind.File, null, ct), "File"));
     }
 
     private async Task RunAsync(Func<CancellationToken, Task<string>> loop, string name)
@@ -324,15 +338,28 @@ public sealed class ControllerSession : IAsyncDisposable
         return "心跳停止";
     }
 
-    private static async Task<string> DrainAsync(FrameStream stream, ChannelKind channel, CancellationToken ct)
+    private async Task<string> DrainAsync(FrameStream stream, ChannelKind channel, Action<Frame>? handler, CancellationToken ct)
     {
         while (true)
         {
             Frame? frame = await stream.ReadAsync(ct).ConfigureAwait(false);
             if (frame is null) return $"被控端已關閉 {channel} 連線";
-            // 影像 / 檔案資料於後續里程碑處理。
+            if (frame.Value.Channel != channel)
+                throw new ProtocolViolationException($"{channel} 連線收到 {frame.Value.Channel} 封包");
+            if (channel == ChannelKind.Video)
+                Interlocked.Add(ref _videoBytesReceived, frame.Value.Payload.Length + 6);
+            handler?.Invoke(frame.Value);
         }
     }
+
+    private long _videoBytesReceived;
+
+    /// <summary>Video 連線累計收到的位元組數（統計用）。</summary>
+    public long VideoBytesReceived => Interlocked.Read(ref _videoBytesReceived);
+
+    /// <summary>要求被控端下一次送出完整畫面。</summary>
+    public ValueTask RequestKeyframeAsync(long lastFrameId, CancellationToken cancellationToken = default)
+        => VideoChannel.WriteAsync(ChannelKind.Video, new KeyframeRequest(lastFrameId), cancellationToken);
 
     public async ValueTask DisposeAsync()
     {

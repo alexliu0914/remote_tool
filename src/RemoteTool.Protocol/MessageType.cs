@@ -31,7 +31,8 @@ public enum MessageType : byte
     // --- 畫面 (Video) ---
     VideoFrame = 40,
     CursorShape = 41,
-    KeyframeRequest = 42,    // 要求 IDR
+    KeyframeRequest = 42,    // 要求 IDR / 整張重送
+    VideoTileUpdate = 43,    // A1 PoC：變動區塊（Deflate）
 
     // --- 剪貼簿 (Control) ---
     ClipboardText = 50,

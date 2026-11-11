@@ -84,6 +84,18 @@ public class ConnectionTests
     }
 
     [Fact]
+    public async Task SlowFingerprintConfirmation_LongerThanHostHandshakeTimeout_StillConnects()
+    {
+        await using var host = new TestHost(handshakeTimeout: TimeSpan.FromMilliseconds(300));
+        await using var session = await ControllerClient.ConnectAsync(host.Options(confirm: (_, _) =>
+        {
+            Thread.Sleep(800); // 使用者慢慢核對
+            return true;
+        }));
+        Assert.True(host.Server.HasActiveSession);
+    }
+
+    [Fact]
     public async Task FingerprintMismatch_Aborts_BeforeSendingCredentials()
     {
         await using var host = new TestHost();

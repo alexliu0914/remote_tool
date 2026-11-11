@@ -1,0 +1,23 @@
+<Window x:Class="RemoteTool.Controller.FingerprintDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="主機指紋" Width="520" SizeToContent="Height"
+        ResizeMode="NoResize" WindowStartupLocation="CenterOwner" ShowInTaskbar="False">
+    <StackPanel Margin="20">
+        <TextBlock x:Name="HeadingText" FontSize="16" FontWeight="SemiBold" TextWrapping="Wrap" />
+        <TextBlock x:Name="BodyText" Margin="0,10,0,0" TextWrapping="Wrap" />
+
+        <TextBlock x:Name="ExpectedLabel" Text="上次記錄：" Margin="0,14,0,4" Visibility="Collapsed" />
+        <TextBox x:Name="ExpectedBox" IsReadOnly="True" FontFamily="Consolas" FontSize="14"
+                 TextWrapping="Wrap" Visibility="Collapsed" />
+
+        <TextBlock x:Name="ActualLabel" Text="對方的主機指紋：" Margin="0,14,0,4" />
+        <TextBox x:Name="ActualBox" IsReadOnly="True" FontFamily="Consolas" FontSize="14" TextWrapping="Wrap" />
+
+        <DockPanel Margin="0,18,0,0" LastChildFill="False">
+            <Button x:Name="CancelButton" Content="取消" DockPanel.Dock="Right" IsCancel="True" IsDefault="True"
+                    MinWidth="90" Margin="8,0,0,0" Click="OnCancel" />
+            <Button x:Name="TrustButton" Content="指紋相同，信任並連線" DockPanel.Dock="Right" Click="OnTrust" />
+        </DockPanel>
+    </StackPanel>
+</Window>

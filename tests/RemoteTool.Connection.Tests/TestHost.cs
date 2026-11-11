@@ -20,7 +20,7 @@ internal sealed class TestHost : IAsyncDisposable
     public HostServer Server { get; }
     public List<string> Logs { get; } = new();
 
-    public TestHost(LoginThrottle? throttle = null, TimeSpan? heartbeatTimeout = null)
+    public TestHost(LoginThrottle? throttle = null, TimeSpan? heartbeatTimeout = null, TimeSpan? handshakeTimeout = null)
     {
         Server = new HostServer(new HostServerOptions
         {
@@ -30,6 +30,7 @@ internal sealed class TestHost : IAsyncDisposable
             Port = 0,
             FailedLoginDelay = TimeSpan.Zero,
             HeartbeatTimeout = heartbeatTimeout ?? TimeSpan.FromSeconds(10),
+            HandshakeTimeout = handshakeTimeout ?? TimeSpan.FromSeconds(15),
             Throttle = throttle ?? new LoginThrottle(),
             Log = m => { lock (Logs) Logs.Add(m); },
         });

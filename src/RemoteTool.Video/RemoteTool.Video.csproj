@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    A1 影像 PoC：區塊差異 + Deflate 編解碼、縮放、串流迴圈。
+    不含擷取（DXGI 在 Host 專案），跨平台，可在 Linux 測試。
+  -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\RemoteTool.Protocol\RemoteTool.Protocol.csproj" />
+  </ItemGroup>
+
+</Project>

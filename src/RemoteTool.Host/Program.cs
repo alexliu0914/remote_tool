@@ -2,15 +2,18 @@ using System.Net;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using RemoteTool.Connection;
+using RemoteTool.Host;
 using RemoteTool.Protocol;
 using RemoteTool.Shared;
+using RemoteTool.Video;
 
 // 被控端（遠端電腦）進入點。
 //
-// 目前完成（M1 第一步）：TLS 1.3 監聽、自簽憑證與 SPKI 指紋、帳密（PBKDF2）、
-// 登入失敗鎖定、三條連線（Control / Video / File）與一次性 Session Token、心跳。
+// 目前完成：TLS 1.3 監聽、自簽憑證與 SPKI 指紋、帳密（PBKDF2）、登入失敗鎖定、
+// 三條連線（Control / Video / File）與一次性 Session Token、心跳；
+// A1：DXGI 擷取主螢幕，以區塊差異 + Deflate 經 Video 連線送出（PoC，見 D-027）。
 //
-// 尚未實作：擷取與 H.264 編碼、經 IPC 交給 HostGuard 注入鍵鼠、剪貼簿、檔案傳輸、系統列。
+// 尚未實作：H.264 編碼（A2）、經 IPC 交給 HostGuard 注入鍵鼠（B1）、剪貼簿、檔案傳輸、系統列。
 // 依規劃書，日後由 HostGuard 啟動並監看本程式；目前可直接執行。
 // 以使用者權限執行，無 Windows 服務、無 SYSTEM。
 
@@ -36,7 +39,13 @@ static class HostProgram
                 return 0;
             }
 
-            return await ServeAsync(ConsoleInput.ParsePort(args, ProtocolInfo.DefaultPort));
+            var video = new VideoStreamerOptions
+            {
+                MaxFps = ParseIntOption(args, "--fps", 10, 1, 30),
+                MaxWidth = ParseIntOption(args, "--max-width", 1920, 320, 8192),
+                Log = Log,
+            };
+            return await ServeAsync(ConsoleInput.ParsePort(args, ProtocolInfo.DefaultPort), video);
         }
         catch (ArgumentException ex)
         {
@@ -56,6 +65,10 @@ static class HostProgram
               Host.exe                  啟動被控端，等待控制端連線（預設埠 52100）
               Host.exe --port <埠>      以指定埠啟動
               Host.exe --fingerprint    顯示本機主機指紋
+
+            畫面（A1 PoC）選項：
+              --fps <1~30>              畫面更新上限，預設 10
+              --max-width <寬>          畫面寬度上限，超過以整數倍縮小，預設 1920
             """);
         Console.WriteLine($"資料位置：{AppPaths.DataDirectory}");
     }
@@ -87,7 +100,25 @@ static class HostProgram
         return 0;
     }
 
-    private static async Task<int> ServeAsync(int port)
+    private static void Log(string message) => Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] {message}");
+
+    private static int ParseIntOption(string[] args, string name, int defaultValue, int min, int max)
+    {
+        int i = Array.IndexOf(args, name);
+        if (i < 0) return defaultValue;
+        if (i + 1 >= args.Length || !int.TryParse(args[i + 1], out int value) || value < min || value > max)
+            throw new ArgumentException($"{name} 後面要接 {min}~{max} 的數字");
+        return value;
+    }
+
+    /// <summary>每條 Video 子連線各自建立一個擷取器，連線結束時釋放。</summary>
+    private static async Task RunVideoAsync(SubChannelContext ctx, VideoStreamerOptions options)
+    {
+        using var capture = new DxgiScreenCapture(Log);
+        await VideoStreamer.RunAsync(capture, ctx.Stream, ctx.Incoming, options, ctx.Token);
+    }
+
+    private static async Task<int> ServeAsync(int port, VideoStreamerOptions video)
     {
         var credentials = CredentialStore.Load(AppPaths.HostCredentialsFile);
         if (credentials is null)
@@ -103,7 +134,10 @@ static class HostProgram
             Certificate = cert,
             Credentials = credentials,
             Port = port,
-            Log = m => Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] {m}"),
+            Log = Log,
+            SubChannelHandler = ctx => ctx.Channel == ChannelKind.Video
+                ? RunVideoAsync(ctx, video)
+                : Task.Delay(Timeout.Infinite, ctx.Token), // File 通道於檔案傳輸階段實作
         });
 
         try
@@ -120,6 +154,7 @@ static class HostProgram
         Console.WriteLine("RemoteTool Host（被控端）已啟動");
         Console.WriteLine($"  帳號：{credentials.Username}");
         Console.WriteLine($"  埠：  {server.Port}");
+        Console.WriteLine($"  畫面：上限 {video.MaxFps} FPS、寬 {video.MaxWidth}（A1 PoC）");
         Console.WriteLine("  本機 IP（控制端連這個）：");
         foreach (var ip in LocalIPv4Addresses())
             Console.WriteLine($"    {ip}");

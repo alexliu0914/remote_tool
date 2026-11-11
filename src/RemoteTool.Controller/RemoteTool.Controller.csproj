@@ -1,8 +1,9 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <OutputType>Exe</OutputType>
+    <OutputType>WinExe</OutputType>
     <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <AssemblyName>Controller</AssemblyName>
@@ -12,10 +13,7 @@
   <ItemGroup>
     <ProjectReference Include="..\RemoteTool.Protocol\RemoteTool.Protocol.csproj" />
     <ProjectReference Include="..\RemoteTool.Connection\RemoteTool.Connection.csproj" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <Compile Include="..\Shared\ConsoleInput.cs" Link="Shared\ConsoleInput.cs" />
+    <ProjectReference Include="..\RemoteTool.Video\RemoteTool.Video.csproj" />
   </ItemGroup>
 
 </Project>

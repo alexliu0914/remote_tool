@@ -96,3 +96,35 @@ public sealed record ErrorMessage(
 {
     public static MessageType Type => MessageType.Error;
 }
+
+/// <summary>控制端要求被控端下一次送出完整畫面（首次連線、解碼錯誤或使用者重新整理）。</summary>
+[MessagePackObject]
+public sealed record KeyframeRequest(
+    [property: Key(0)] long LastFrameId) : IMessage
+{
+    public static MessageType Type => MessageType.KeyframeRequest;
+}
+
+/// <summary>畫面的一個矩形區塊，<see cref="Data"/> 為 BGRA 逐列排列後以 Deflate 壓縮。</summary>
+[MessagePackObject]
+public sealed record VideoTile(
+    [property: Key(0)] int X,
+    [property: Key(1)] int Y,
+    [property: Key(2)] int Width,
+    [property: Key(3)] int Height,
+    [property: Key(4)] byte[] Data);
+
+/// <summary>
+/// A1 PoC 影像格式（見 DECISIONS D-027）：一張畫面的變動區塊，可能分成多個封包，
+/// 最後一個封包 <see cref="EndOfFrame"/> 為 true，控制端此時才更新顯示。
+/// </summary>
+[MessagePackObject]
+public sealed record VideoTileUpdate(
+    [property: Key(0)] long FrameId,
+    [property: Key(1)] int FrameWidth,
+    [property: Key(2)] int FrameHeight,
+    [property: Key(3)] bool EndOfFrame,
+    [property: Key(4)] VideoTile[] Tiles) : IMessage
+{
+    public static MessageType Type => MessageType.VideoTileUpdate;
+}

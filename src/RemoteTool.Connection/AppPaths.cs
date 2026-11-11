@@ -30,6 +30,9 @@ public static class AppPaths
     /// <summary>控制端已信任的主機指紋。</summary>
     public static string KnownHostsFile => Path.Combine(DataDirectory, "known-hosts.json");
 
+    /// <summary>控制端診斷記錄（連線失敗的完整錯誤；不含密碼）。</summary>
+    public static string ControllerLogFile => Path.Combine(DataDirectory, "controller.log");
+
     /// <summary>控制端上次輸入的位址、埠與帳號（不含密碼）。</summary>
     public static string ControllerSettingsFile => Path.Combine(DataDirectory, "controller-settings.json");
 }

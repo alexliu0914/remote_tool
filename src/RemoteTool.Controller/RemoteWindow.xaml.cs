@@ -55,6 +55,7 @@ public partial class RemoteWindow : Window
     private async Task WatchSessionAsync()
     {
         string reason = await _session.Completion;
+        DiagnosticLog.Write($"工作階段結束 {_session.HostKey}：{reason}");
         await Dispatcher.InvokeAsync(() =>
         {
             if (_closing) return;

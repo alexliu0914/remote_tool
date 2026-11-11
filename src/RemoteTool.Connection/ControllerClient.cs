@@ -110,6 +110,21 @@ public static class ControllerClient
         }
     }
 
+    /// <summary>
+    /// 只做 TLS 握手取得對方的主機指紋，隨即關閉連線，不送任何資料（不送帳密）。
+    /// 供介面在「沒有任何進行中的連線」的狀態下請使用者核對指紋。
+    /// </summary>
+    public static async Task<string> ProbeFingerprintAsync(string host, int port, TimeSpan? timeout = null,
+        CancellationToken cancellationToken = default)
+    {
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        cts.CancelAfter(timeout ?? TimeSpan.FromSeconds(15));
+        var (stream, fingerprint) = await OpenTlsAsync(host, port, null, KnownHostsStore.KeyFor(host, port), cts.Token)
+            .ConfigureAwait(false);
+        try { await stream.DisposeAsync().ConfigureAwait(false); } catch { /* 只要指紋 */ }
+        return fingerprint;
+    }
+
     private static void ValidateGrant(SessionTokenGrant grant)
     {
         if (grant.Channel is not (ChannelKind.Video or ChannelKind.File)

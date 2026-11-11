@@ -19,6 +19,7 @@ public partial class App : Application
 
     private void OnUnhandledException(object sender, DispatcherUnhandledExceptionEventArgs e)
     {
+        DiagnosticLog.Write("未預期的錯誤", e.Exception);
         MessageBox.Show($"發生未預期的錯誤：\n\n{e.Exception.Message}", "RemoteTool", MessageBoxButton.OK, MessageBoxImage.Error);
         e.Handled = true;
     }

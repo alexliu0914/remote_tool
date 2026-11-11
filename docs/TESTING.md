@@ -61,7 +61,7 @@ dotnet test RemoteTool.sln -c Release
 | 測試專案 | 數量 | 內容 |
 | --- | --- | --- |
 | RemoteTool.Protocol.Tests | 20 | 封包分幀、訊息序列化、格式錯誤拒絕 |
-| RemoteTool.Connection.Tests | 24 | 127.0.0.1 真實 TLS 1.3：登入、指紋、鎖定、Busy、token、心跳、版本 |
+| RemoteTool.Connection.Tests | 27 | 127.0.0.1 真實 TLS 1.3：登入、指紋、探測、鎖定、Busy、token、心跳、版本 |
 | RemoteTool.Video.Tests | 22 | 區塊編解碼逐像素一致、縮放、解碼防護（越界、壓縮炸彈）、經 TLS 的影像串流、FPS 上限 |
 
 ## 四、單機實測（一台電腦）
@@ -124,7 +124,7 @@ $C = ".\src\RemoteTool.Controller\bin\Release\net8.0-windows\Controller.exe"
 | R-11 | 接續 R-10，按「移除此主機的指紋記錄」→ 是，再連線 | 重新詢問指紋（新指紋），信任後連線成功 |
 | R-12 | 關閉 Host，直接連線 | 「連線失敗」並提示檢查 Host、IP、防火牆 |
 | R-13 | 第一次連線的指紋視窗，等 30 秒以上才按「信任並連線」 | 仍能連線成功（不受被控端 15 秒握手時限影響） |
-| R-14 | 關掉控制端再開 | IP、埠、帳號自動帶入，游標停在密碼欄；**密碼不會被記住** |
+| R-14 | ① 用控制端連線一次（成功或密碼錯誤都可以）② 按登入視窗右上角 ✕ 關閉整個控制端 ③ 重新執行 `& $C` | 登入視窗的 IP、埠、帳號已自動填好，游標停在密碼欄；**密碼欄是空的**（不記密碼）。設定存在 `%LOCALAPPDATA%\RemoteTool\controller-settings.json` |
 
 ### 4.4 A1：遠端畫面測試（對應 G0-02 的畫面部分）
 
@@ -145,6 +145,9 @@ $C = ".\src\RemoteTool.Controller\bin\Release\net8.0-windows\Controller.exe"
 | V-13 | 畫面視窗按「中斷連線」 | 回到登入視窗顯示「已中斷連線。」；視窗 A 顯示工作階段結束 |
 
 > 若 V-01 黑畫面或視窗 A 出現「無法啟動 DXGI 擷取」「找不到接著螢幕的顯示卡」，請把視窗 A 的訊息完整回報。
+
+> **控制端診斷記錄**：連線失敗時，完整錯誤會寫入 `%LOCALAPPDATA%\RemoteTool\controller.log`（不含密碼）。
+> 回報問題時可用 `Get-Content $env:LOCALAPPDATA\RemoteTool\controller.log -Tail 40` 顯示最後 40 行並貼上。
 
 ## 五、雙機實測（兩台實體 Windows 11）
 
@@ -232,7 +235,7 @@ Test-NetConnection 192.168.1.20 -Port 52100
 | 項目 | 通過條件 |
 | --- | --- |
 | 建置 | 0 個錯誤 |
-| 自動測試 | 20 + 24 + 22 個全部通過 |
+| 自動測試 | 20 + 27 + 22 個全部通過 |
 | 單機回歸 | 4.3 的 R-01～R-14 全部符合預期 |
 | A1 單機 | 4.4 的 V-01～V-13 全部符合預期 |
 | 雙機 | 5.6 全部符合預期（G0-01 才可標 PASS） |
@@ -247,6 +250,7 @@ Test-NetConnection 192.168.1.20 -Port 52100
 | `host-credentials.json` | 被控端帳密（只有雜湊）。重設請執行 `Host.exe --setup` |
 | `known-hosts.json` | 控制端信任過的主機指紋 |
 | `controller-settings.json` | 控制端上次輸入的 IP、埠、帳號（不含密碼） |
+| `controller.log` | 控制端診斷記錄（連線失敗的完整錯誤，不含密碼） |
 
 ```powershell
 explorer $env:LOCALAPPDATA\RemoteTool

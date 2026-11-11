@@ -33,11 +33,13 @@
 | T-002 | 2026-11-11 | c4b55e0 | 雲端 Linux | Claude | 自動測試：Protocol 20 項、Connection 23 項（127.0.0.1 真實 TLS 1.3） | PASS | 43/43，連續 3 次；另以主控台程式實跑：首次信任、已知主機、錯誤密碼、Busy、Host 關閉、憑證更換警告、`--forget` 皆符合預期 |
 | T-003 | 2026-11-11 | c4b55e0 | 使用者 Windows 11 實機，單機（127.0.0.1） | 使用者 | TESTING.md 4.4 單機實測第 1–12 項 | PASS | 使用者回報 12 項全部通過。過程中曾因執行舊版建置（未切分支、未重新建置）看到骨架訊息，更新後正常，非程式缺陷。步驟：`git show c4b55e0:docs/TESTING.md` |
 | T-004 | 2026-11-11 | 1e4226d | 雲端 Linux（Microsoft .NET SDK 8.0.428） | Claude | A1 自動測試與回歸：Protocol 20、Connection 24、Video 22；全方案含 WPF 與 DXGI 交叉建置；Host / Controller 以 win-x64 self-contained 發佈 | PASS | 66/66，連續 3 次。**DXGI 擷取與 WPF 顯示無法在 Linux 執行，未經實機驗證** |
+| T-005 | 2026-11-11 | 3be510f 起之建置（含 1e4226d WPF 控制端） | 使用者 Windows 11 實機，單機，PowerShell 5.1 | 使用者 | TESTING.md 4.3 回歸 R-01～R-14（WPF 版） | **FAIL**（部分） | 使用者回報：① 錯誤情境的登入視窗訊息「都沒有紅字」（待釐清是顏色不對或未顯示）；② **R-13 FAIL**：指紋視窗等 30 秒以上才按信任，出現「連線失敗：A task was canceled.」；③ R-14 未完成（不清楚操作方式）；其餘項目未回報失敗。雲端以相同時序（35 秒）無法重現 R-13，推測與 Windows 環境有關 |
+| T-006 | 2026-11-11 | 本筆提交 | 雲端 Linux（Microsoft .NET SDK 8.0.428） | Claude | R-13 修正：首次連線改為「探測指紋 → 關閉連線 → 使用者核對 → 再連線」，核對期間無進行中的連線與計時器；新增控制端診斷記錄 controller.log。自動測試 Protocol 20、Connection 27、Video 22 | PASS | 69/69。新增測試：探測不送帳密、探測後慢速核對再連線、控制端逾時 1 秒而核對 2.5 秒仍成功。**R-13 需使用者在 Windows 重測** |
 
 ## 4. 尚待人工執行
 
 | 項目 | 對應 | 需要 | 步驟 |
 | --- | --- | --- | --- |
-| 單機回歸（WPF 版） | G0-01 | 一台 Windows 11 | [TESTING.md](TESTING.md) 4.3 R-01～R-14 |
+| 單機回歸（WPF 版） | G0-01 | 一台 Windows 11 | [TESTING.md](TESTING.md) 4.3 R-01～R-14；T-005 待重測：R-13、R-14、錯誤訊息顏色。另待 PLAN_GAPS G-01～G-08 修正後整體再跑 |
 | A1 單機畫面 | G0-02（畫面部分） | 一台 Windows 11 | [TESTING.md](TESTING.md) 4.4 V-01～V-13 |
 | 雙機驗證 | G0-01、G0-02 | 兩台實體 Windows 11、同一區域網路 | [TESTING.md](TESTING.md) 第五節 5.6 |

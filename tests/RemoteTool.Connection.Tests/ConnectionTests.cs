@@ -96,6 +96,50 @@ public class ConnectionTests
     }
 
     [Fact]
+    public async Task SlowFingerprintConfirmation_LongerThanControllerConnectTimeout_StillConnects()
+    {
+        await using var host = new TestHost(handshakeTimeout: TimeSpan.FromMilliseconds(300));
+        var options = host.Options(confirm: (_, _) =>
+        {
+            Thread.Sleep(2500); // 比控制端連線時限（1 秒）還久
+            return true;
+        });
+        options = new ControllerConnectOptions
+        {
+            Host = options.Host, Port = options.Port, Username = options.Username, Password = options.Password,
+            KnownHosts = options.KnownHosts, ConfirmNewHost = options.ConfirmNewHost,
+            ConnectTimeout = TimeSpan.FromSeconds(1),
+        };
+        await using var session = await ControllerClient.ConnectAsync(options);
+        Assert.True(host.Server.HasActiveSession);
+    }
+
+    [Fact]
+    public async Task Probe_ReturnsFingerprint_WithoutLoginAttempt()
+    {
+        await using var host = new TestHost();
+        string fp = await ControllerClient.ProbeFingerprintAsync("127.0.0.1", host.Server.Port);
+        Assert.Equal(host.Server.Fingerprint, fp);
+        await Task.Delay(200);
+        Assert.Equal(0, host.Server.LoginAttempts);
+    }
+
+    [Fact]
+    public async Task ProbeThenTrust_ThenConnect_DoesNotAskAgain()
+    {
+        await using var host = new TestHost(handshakeTimeout: TimeSpan.FromMilliseconds(300));
+        var known = new KnownHostsStore(null);
+        string fp = await ControllerClient.ProbeFingerprintAsync("127.0.0.1", host.Server.Port);
+        await Task.Delay(1000); // 使用者慢慢核對，超過被控端握手時限
+        known.Set(KnownHostsStore.KeyFor("127.0.0.1", host.Server.Port), fp);
+
+        bool asked = false;
+        await using var session = await ControllerClient.ConnectAsync(host.Options(known: known, confirm: (_, _) => asked = true));
+        Assert.False(asked);
+        Assert.True(host.Server.HasActiveSession);
+    }
+
+    [Fact]
     public async Task FingerprintMismatch_Aborts_BeforeSendingCredentials()
     {
         await using var host = new TestHost();

@@ -5,79 +5,110 @@ namespace RemoteTool.Protocol.Tests;
 
 public class MessageCodecTests
 {
-    private static T RoundTrip<T>(ChannelKind channel, T message) where T : IMessage
+    private static T RoundTrip<T>(T message) where T : IMessage
     {
-        var frame = MessageCodec.Encode(channel, message);
-        Assert.Equal(T.Type, frame.Type);
-        Assert.Equal(channel, frame.Channel);
-
-        // 經過線路格式再解回來
-        Assert.True(FrameCodec.TryDecode(FrameCodec.Encode(frame), out var decodedFrame, out _));
-        return MessageCodec.Decode<T>(decodedFrame);
+        var frame = new Frame(T.Type, 0, 1, MessageCodec.Serialize(message));
+        Assert.True(FrameCodec.TryDecode(FrameCodec.Encode(frame), out var decoded, out _));
+        return MessageCodec.Decode<T>(decoded);
     }
 
     [Fact]
-    public void Hello_RoundTrips()
-        => Assert.Equal(new Hello(1, ChannelKind.Video), RoundTrip(ChannelKind.Video, new Hello(1, ChannelKind.Video)));
+    public void Hello_RoundTrips_WithCapabilities()
+    {
+        var d = RoundTrip(new Hello(1, ChannelKind.Video, ["h264", "tiles"]));
+        Assert.Equal((1, ChannelKind.Video), (d.ProtocolVersion, d.Role));
+        Assert.Equal(new[] { "h264", "tiles" }, d.Capabilities);
+    }
 
     [Fact]
     public void LoginRequest_RoundTrips_WithUnicode()
-    {
-        var msg = new LoginRequest("使用者", "密碼 p@ss");
-        Assert.Equal(msg, RoundTrip(ChannelKind.Control, msg));
-    }
+        => Assert.Equal(new LoginRequest("使用者", "密碼 p@ss"), RoundTrip(new LoginRequest("使用者", "密碼 p@ss")));
 
     [Fact]
     public void LoginResult_RoundTrips()
-    {
-        var msg = new LoginResult(false, AuthError.TooManyAttempts, 30);
-        Assert.Equal(msg, RoundTrip(ChannelKind.Control, msg));
-    }
+        => Assert.Equal(new LoginResult(false, AuthError.TooManyAttempts, 30), RoundTrip(new LoginResult(false, AuthError.TooManyAttempts, 30)));
 
     [Fact]
-    public void SessionTokenGrant_RoundTrips()
+    public void TokenMessages_RoundTrip()
     {
         var token = Enumerable.Range(0, 32).Select(i => (byte)i).ToArray();
-        var decoded = RoundTrip(ChannelKind.Control, new SessionTokenGrant(ChannelKind.File, token));
-        Assert.Equal(ChannelKind.File, decoded.Channel);
-        Assert.Equal(token, decoded.Token);
+        var g = RoundTrip(new SessionTokenGrant(ChannelKind.File, token, 30));
+        Assert.Equal((ChannelKind.File, 30), (g.Role, g.ExpiresInSeconds));
+        Assert.Equal(token, g.Token);
+        Assert.Equal(ChannelKind.Video, RoundTrip(new SessionTokenRequest(ChannelKind.Video)).Role);
+        Assert.Equal(token, RoundTrip(new SubConnectChallenge(token)).Nonce);
+        Assert.Equal(token, RoundTrip(new SubConnectAuth(token)).Mac);
+        Assert.Equal(new SubConnectResult(true, AuthError.None), RoundTrip(new SubConnectResult(true, AuthError.None)));
     }
 
     [Fact]
-    public void SubConnect_And_Heartbeat_And_Error_RoundTrip()
+    public void Heartbeat_Keyframe_Error_RoundTrip()
     {
-        Assert.Equal(new byte[] { 7, 8 }, RoundTrip(ChannelKind.Video, new SubConnectAuth(new byte[] { 7, 8 })).Token);
-        Assert.Equal(new SubConnectResult(true, AuthError.None), RoundTrip(ChannelKind.File, new SubConnectResult(true, AuthError.None)));
-        Assert.Equal(new Heartbeat(long.MaxValue), RoundTrip(ChannelKind.Control, new Heartbeat(long.MaxValue)));
-        Assert.Equal(new ErrorMessage("錯誤"), RoundTrip(ChannelKind.Control, new ErrorMessage("錯誤")));
+        Assert.Equal(new Heartbeat(long.MaxValue), RoundTrip(new Heartbeat(long.MaxValue)));
+        Assert.Equal(new KeyframeRequest(9), RoundTrip(new KeyframeRequest(9)));
+        Assert.Equal(new ErrorMessage(ErrorCode.VersionMismatch, "錯誤"), RoundTrip(new ErrorMessage(ErrorCode.VersionMismatch, "錯誤")));
     }
 
     [Fact]
     public void Decode_WrongType_Throws()
     {
-        var frame = MessageCodec.Encode(ChannelKind.Control, new Heartbeat(1));
+        var frame = new Frame(MessageType.Heartbeat, 0, 1, MessageCodec.Serialize(new Heartbeat(1)));
         Assert.Throws<InvalidDataException>(() => MessageCodec.Decode<LoginRequest>(frame));
     }
 
     [Fact]
     public void Decode_GarbagePayload_Throws()
-    {
-        var frame = new Frame(ChannelKind.Control, MessageType.LoginRequest, new byte[] { 0xC1, 0xFF, 0x00 });
-        Assert.Throws<InvalidDataException>(() => MessageCodec.Decode<LoginRequest>(frame));
-    }
+        => Assert.Throws<InvalidDataException>(() =>
+            MessageCodec.Decode<LoginRequest>(new Frame(MessageType.LoginRequest, 0, 1, new byte[] { 0xC1, 0xFF, 0x00 })));
 
     [Fact]
     public void Decode_TrailingBytes_Throws()
     {
-        var good = MessageCodec.Encode(ChannelKind.Control, new Heartbeat(5));
-        var padded = new Frame(good.Channel, good.Type, good.Payload.ToArray().Append((byte)0).ToArray());
-        Assert.Throws<InvalidDataException>(() => MessageCodec.Decode<Heartbeat>(padded));
+        var payload = MessageCodec.Serialize(new Heartbeat(5)).Append((byte)0).ToArray();
+        Assert.Throws<InvalidDataException>(() => MessageCodec.Decode<Heartbeat>(new Frame(MessageType.Heartbeat, 0, 1, payload)));
     }
 
     [Fact]
-    public void IsKnownType_RejectsUndefined()
+    public void Decode_HugeDeclaredArray_IsRejectedWithoutAllocating()
     {
-        Assert.True(MessageCodec.IsKnownType(MessageType.Heartbeat));
-        Assert.False(MessageCodec.IsKnownType((MessageType)199));
+        // VideoTileUpdate：[FrameId, W, H, EndOfFrame, Tiles]，Tiles 宣稱有 2^32-1 個元素，實際只有幾個位元組
+        var payload = new byte[] { 0x95, 0x01, 0x01, 0x01, 0xC3, 0xDD, 0xFF, 0xFF, 0xFF, 0xFF, 0x90 };
+        Assert.Throws<InvalidDataException>(() =>
+            MessageCodec.Decode<VideoTileUpdate>(new Frame(MessageType.VideoTileUpdate, 0, 1, payload)));
+    }
+
+    [Fact]
+    public void Decode_HugeDeclaredString_IsRejected()
+    {
+        // LoginRequest：[Username, Password]，Username 宣稱 2^32-1 位元組
+        var payload = new byte[] { 0x92, 0xDB, 0xFF, 0xFF, 0xFF, 0xFF, 0x41 };
+        Assert.Throws<InvalidDataException>(() =>
+            MessageCodec.Decode<LoginRequest>(new Frame(MessageType.LoginRequest, 0, 1, payload)));
+    }
+
+    [Fact]
+    public void Decode_DeepNesting_IsRejected()
+    {
+        // Hello 的 Capabilities 位置放入 100 層巢狀陣列
+        var payload = new List<byte> { 0x93, 0x01, 0x01 };
+        for (int i = 0; i < 100; i++) payload.Add(0x91);
+        payload.Add(0xC0);
+        Assert.Throws<InvalidDataException>(() =>
+            MessageCodec.Decode<Hello>(new Frame(MessageType.Hello, 0, 1, payload.ToArray())));
+    }
+
+    [Fact]
+    public void SubConnectProof_DependsOnTokenNonceAndRole()
+    {
+        var token = new byte[32]; token[0] = 1;
+        var nonce = new byte[32]; nonce[0] = 2;
+        var mac = SubConnectProof.Compute(token, nonce, ChannelKind.Video);
+        Assert.Equal(32, mac.Length);
+        Assert.Equal(mac, SubConnectProof.Compute(token, nonce, ChannelKind.Video));
+        Assert.NotEqual(mac, SubConnectProof.Compute(token, nonce, ChannelKind.File));
+        var otherNonce = (byte[])nonce.Clone(); otherNonce[1] = 9;
+        Assert.NotEqual(mac, SubConnectProof.Compute(token, otherNonce, ChannelKind.Video));
+        var otherToken = (byte[])token.Clone(); otherToken[1] = 9;
+        Assert.NotEqual(mac, SubConnectProof.Compute(otherToken, nonce, ChannelKind.Video));
     }
 }

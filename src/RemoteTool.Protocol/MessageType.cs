@@ -1,26 +1,33 @@
 namespace RemoteTool.Protocol;
 
 /// <summary>
-/// 封包類型。每種訊息在上層對應一個固定 schema（MessagePack）。
-/// 反序列化時拒絕未知類型、超長或格式錯誤的資料。
+/// Protocol V1 訊息類型（線路上為 uint16 big-endian）。
+/// 不在此列舉中的值為「未知類型」：接收端回 Error(UnknownMessageType) 後關閉連線。
+/// 每種類型允許出現的連線角色與方向見 <see cref="ProtocolRules"/>。
 /// </summary>
-public enum MessageType : byte
+public enum MessageType : ushort
 {
-    // --- 握手與工作階段 (Control) ---
-    Hello = 1,              // ProtocolVersion + Capabilities
+    // --- 每條連線共用 ---
+    Hello = 1,              // 第一個封包，雙方各送一次：ProtocolVersion、Role、Capabilities
+
+    // --- Control：登入與工作階段 ---
     LoginRequest = 2,
     LoginResult = 3,
-    SessionTokenGrant = 4,  // 子連線用的一次性 token
-    SubConnectAuth = 5,     // Video / File 子連線出示 token
-    Heartbeat = 6,
-    SubConnectResult = 7,   // 子連線 token 驗證結果
+    SessionTokenGrant = 4,  // Video / File 的一次性 token（30 秒內使用）
+    Heartbeat = 6,          // 請求帶 RequestId，回應填相同 RequestId
+    SessionTokenRequest = 8,// 子連線重連前向 Control 申請新 token
 
-    // --- 工作階段狀態 (Control) ---
+    // --- Video / File：子連線驗證 ---
+    SubConnectAuth = 5,     // HMAC-SHA256(token, nonce ‖ 標籤 ‖ 角色)
+    SubConnectResult = 7,
+    SubConnectChallenge = 9,// 被控端送出的一次性 nonce
+
+    // --- Control：工作階段狀態（規劃中） ---
     SessionStateChanged = 10, // 鎖定 / 解鎖 / 登出 / 切換使用者 / UAC
     PauseControl = 11,
     ResumeControl = 12,       // 攜帶新的輸入世代編號
 
-    // --- 輸入 (Control) ---
+    // --- Control：輸入（規劃中） ---
     KeyEvent = 20,
     MouseMoveEvent = 21,
     MouseButtonEvent = 22,
@@ -28,16 +35,16 @@ public enum MessageType : byte
     InputHeartbeat = 24,     // 有鍵按住時定期送，逾時則釋放
     ReleaseAllInput = 25,
 
-    // --- 畫面 (Video) ---
-    VideoFrame = 40,
-    CursorShape = 41,
+    // --- Video ---
+    VideoFrame = 40,         // H.264（A2）
+    CursorShape = 41,        // A3
     KeyframeRequest = 42,    // 要求 IDR / 整張重送
     VideoTileUpdate = 43,    // A1 PoC：變動區塊（Deflate）
 
-    // --- 剪貼簿 (Control) ---
+    // --- Control：剪貼簿（規劃中） ---
     ClipboardText = 50,
 
-    // --- 檔案 (File) ---
+    // --- File（規劃中） ---
     FileListRequest = 60,
     FileListReply = 61,
     FileChunk = 62,          // 256 KB 區塊 + 區塊雜湊

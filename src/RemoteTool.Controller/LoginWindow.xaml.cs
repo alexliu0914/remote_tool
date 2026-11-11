@@ -138,8 +138,13 @@ public partial class LoginWindow : Window
             DiagnosticLog.Write($"登入失敗：{ex.Error}");
             ShowStatus("登入失敗：" + ex.Message);
         }
-        catch (Exception ex) when (ex is SocketException or IOException or AuthenticationException
-                                       or OperationCanceledException or ProtocolViolationException or InvalidDataException)
+        catch (RemoteErrorException ex) when (ex.Code == ErrorCode.VersionMismatch)
+        {
+            DiagnosticLog.Write("協定版本不相容", ex);
+            ShowStatus("連線失敗：" + ex.Message);
+        }
+        catch (Exception ex) when (ex is SocketException or IOException or AuthenticationException or OperationCanceledException
+                                       or ProtocolViolationException or ProtocolException or RemoteErrorException or InvalidDataException)
         {
             DiagnosticLog.Write("連線失敗", ex);
             string reason = ex is OperationCanceledException ? "逾時，被控端沒有回應" : ex.Message;

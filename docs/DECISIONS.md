@@ -10,15 +10,15 @@
 | ID | 日期 | 決議 | 來源 | 狀態 |
 | --- | --- | --- | --- | --- |
 | D-001 | 2026-11-09 | 點對點直接 IP 連線，不使用雲端、中繼或協調伺服器 | PLAN | 有效 |
-| D-002 | 2026-11-09 | 平台僅 Windows 11 x64 ↔ Windows 11 x64，.NET 8 | PLAN | **與原文衝突**：原文 §4 為 .NET 10（G-09） |
+| D-002 | 2026-11-09 | 平台僅 Windows 11 x64 ↔ Windows 11 x64，.NET 8 | PLAN | 已被 D-036 取代（.NET 10） |
 | D-003 | 2026-11-09 | 被控端全部以一般使用者權限執行；不使用 Windows 服務、不使用 SYSTEM | PLAN | 有效 |
 | D-004 | 2026-11-09 | 三個元件：Controller（控制端）、Host（被控端主程式）、HostGuard（被控端守護），另有跨平台共用庫 | PLAN | 有效 |
 | D-005 | 2026-11-09 | HostGuard 是**唯一**呼叫 SendInput 的程式；Host 驗證遠端輸入後經本機 Named Pipe 交給 HostGuard。HostGuard 不連網、不讀剪貼簿、不處理畫面或檔案。注入與按鍵狀態表在同一執行緒更新 | PLAN | 有效 |
 | D-006 | 2026-11-09 | HostGuard 監看 Host 的 process handle，異常結束後先釋放仍按住的鍵，再依重啟政策（指數退避、10 分鐘內最多 5 次）重啟 | PLAN | 有效 |
 | D-007 | 2026-11-09 | Named Pipe IPC 白名單：限同使用者與工作階段，只接受 HostGuard 自己啟動的 Host.exe | PLAN | 有效 |
 | D-008 | 2026-11-09 | 三條 TLS 連線共用 TCP 52100：Control（握手、登入、心跳、鍵鼠、剪貼簿、螢幕清單、品質調整）、Video（H.264 與游標）、File（限速檔案傳輸）。Control 中斷撤銷整個工作階段；Video / File 中斷各自獨立重連 | PLAN | 有效 |
-| D-009 | 2026-11-09 | 封包格式 `[Length 4B big-endian][Channel 1B][Type 1B][Payload]`，Payload 上限 1 MB，超過即拒絕 | PLAN | **來源誤標、與原文衝突**：此格式出自骨架程式；原文 §7 為 `[Length][MessageType][RequestId][Sequence]`（G-08） |
-| D-010 | 2026-11-09 | 訊息內容以 MessagePack 序列化，每種訊息固定 schema；拒絕未知類型、超長或格式錯誤資料 | PLAN | 有效；原文另要求握手帶 Capabilities（G-08） |
+| D-009 | 2026-11-09 | 封包格式 `[Length 4B big-endian][Channel 1B][Type 1B][Payload]`，Payload 上限 1 MB，超過即拒絕 | PLAN | 已被 D-038 取代（Protocol V1 分幀） |
+| D-010 | 2026-11-09 | 訊息內容以 MessagePack 序列化，每種訊息固定 schema；拒絕未知類型、超長或格式錯誤資料 | PLAN | 有效；安全設定與 Capabilities 見 D-038 |
 | D-011 | 2026-11-09 | TLS 1.3；被控端自簽憑證；控制端首次連線核對 SHA-256(SubjectPublicKeyInfo) 指紋 | PLAN | 有效 |
 | D-012 | 2026-11-09 | 登入後以 Session Token 開 Video / File 子連線，token 為一次性 | PLAN | 有效 |
 | D-013 | 2026-11-09 | Controller 使用 WPF；畫面區以 HwndHost 嵌入 D3D11，鍵鼠與拖放由該 Win32 視窗處理（G0-04 驗證，失敗則驗證替代方案） | PLAN | 有效 |
@@ -26,11 +26,11 @@
 | D-015 | 2026-11-09 | 輸入有按鍵按住時定期送 InputHeartbeat，逾時則釋放；ResumeControl 攜帶新的輸入世代編號以丟棄舊事件 | PLAN | 有效 |
 | D-016 | 2026-11-11 | 指紋核對在 TLS 握手當下進行，**送出帳密之前**完成；陌生主機需使用者確認，指紋不符即中止且不自動覆寫記錄 | DEV→USER | 有效；但原文 §6 要求以主機公鑰而非 IP 識別（G-06） |
 | D-017 | 2026-11-11 | 憑證為 ECDSA P-256 自簽、有效 20 年，存於 `%LOCALAPPDATA%\RemoteTool\host-cert.pfx`；控制端不檢查憑證鏈、名稱與到期日，只比對指紋 | DEV→USER | **部分與原文衝突**：原文要求私鑰以 DPAPI 保存（G-03） |
-| D-018 | 2026-11-11 | 帳密以 PBKDF2-SHA256（310,000 次、16 位元組鹽）雜湊保存；同來源 IP 5 分鐘內失敗 5 次暫時鎖定；每次失敗延遲 500 ms；帳號錯誤與密碼錯誤回應相同 | DEV→USER | **與原文衝突**：原文 §6 為 Argon2id、至少 10 字元、漸進延遲且不採鎖定（G-01、G-02） |
-| D-019 | 2026-11-11 | 一次性 token 為 32 位元組亂數，綁定通道（Video token 不能開 File）；每用掉一個即經 Control 補發一個供重連；Control 結束時全部作廢 | DEV→USER | **與原文衝突**：原文 §7 為 30 秒期限、向 Control 重新申請、nonce + HMAC 證明（G-07） |
+| D-018 | 2026-11-11 | 帳密以 PBKDF2-SHA256（310,000 次、16 位元組鹽）雜湊保存；同來源 IP 5 分鐘內失敗 5 次暫時鎖定；每次失敗延遲 500 ms；帳號錯誤與密碼錯誤回應相同 | DEV→USER | 已被 D-037（Argon2id）與 D-041（漸進延遲）取代 |
+| D-019 | 2026-11-11 | 一次性 token 為 32 位元組亂數，綁定通道（Video token 不能開 File）；每用掉一個即經 Control 補發一個供重連；Control 結束時全部作廢 | DEV→USER | 已被 D-039 取代（30 秒、重新申請、nonce + HMAC） |
 | D-020 | 2026-11-11 | 同時只允許一個控制端工作階段；第二個登入回應 Busy | DEV→USER | 有效 |
-| D-021 | 2026-11-11 | Control 心跳：控制端每 2 秒送出，雙方 10 秒未收到即結束工作階段 | DEV→USER | **與原文衝突**：原文 §7 為 6 秒逾時（G-05） |
-| D-022 | 2026-11-11 | 每條連線第一個封包為 Hello（協定版本 + 通道），版本不同即回 Error 並關閉 | DEV→USER | 有效 |
+| D-021 | 2026-11-11 | Control 心跳：控制端每 2 秒送出，雙方 10 秒未收到即結束工作階段 | DEV→USER | 已被 D-038 取代（6 秒） |
+| D-022 | 2026-11-11 | 每條連線第一個封包為 Hello（協定版本 + 通道），版本不同即回 Error 並關閉 | DEV→USER | 有效；V1 加入 Capabilities 與 Error 錯誤碼（D-038） |
 | D-023 | 2026-11-11 | 連線層（`RemoteTool.Connection`）與協定庫保持跨平台（net8.0），以便在 CI 與 Linux 上用真實 TLS 做整合測試；Windows 專屬功能放在應用程式專案 | DEV→USER | 有效 |
 | D-024 | 2026-11-11 | 開發順序：A1 DXGI 擷取 + 基本影像傳輸 + WPF 顯示 → A2 H.264 硬體編解碼（含軟體備援）→ B1 HostGuard IPC、注入、狀態追蹤與異常復原 → A3 多螢幕、游標、高 DPI、解析度切換 → 工作階段 / 鎖定 / UAC 安全暫停與重連 → 雙向檔案拖拉 PoC → Spike 0 完整驗收 | USER | 有效 |
 | D-025 | 2026-11-11 | 雙機驗證可延後、不阻擋開發，但必須在 Spike 0 最終驗收前完成；未執行的雙機測試不得以單機結果代替 | USER | 有效 |
@@ -44,3 +44,9 @@
 | D-033 | 2026-11-11 | DXGI 擷取時列舉顯示卡，選擇接著主螢幕的那張建立 D3D11 裝置（雙顯卡筆電的預設顯示卡不一定接著螢幕） | DEV | 待確認 |
 | D-034 | 2026-11-11 | 規劃書 V2.2.2 原文入庫於 `docs/plan/PLAN_V2.2.2.md`，為最高依據；其他文件與原文不一致時以原文為準，差異記於 `docs/PLAN_GAPS.md` | USER | 有效 |
 | D-035 | 2026-11-11 | 首次連線改由介面分兩步：`ProbeFingerprintAsync` 只做 TLS 握手取得指紋並關閉連線 → 使用者核對（此時沒有任何進行中的連線或計時器）→ 記住指紋後才呼叫 `ConnectAsync` 登入。原因：D-032 作法在 Windows 上核對超過 30 秒仍失敗（T-005） | DEV | 待確認 |
+| D-036 | 2026-11-11 | 整個方案升級為 .NET 10 LTS（net10.0 / net10.0-windows），`global.json` 指定 SDK 10.0.100 以上；以 `X509CertificateLoader` 取代過時的憑證建構子 | USER | 有效（PLAN_GAPS G-09） |
+| D-037 | 2026-11-11 | 密碼以 Argon2id 雜湊，套件 Konscious.Security.Cryptography.Argon2 1.3.1。評估：MIT 授權、2024-06-19 發佈、在 net10.0 使用其 net8.0 版、相依 Blake2 1.1.1（net8+ 無相依）與 System.Memory 4.5.4、NuGet 無已知弱點、輸出符合 RFC 9106 Argon2id 測試向量。每組密碼獨立 16 位元組隨機鹽；參數 19456 KiB / 2 次 / 平行度 1（雲端實測驗證約 130 ms）；載入與驗證時檢查參數範圍（8 MiB～1 GiB、次數 1～16、平行度 1～16）；最短 10 字元；明文密碼與衍生值用後清零，不記錄 | USER | 有效（G-02） |
+| D-038 | 2026-11-11 | Protocol V1：所有連線共用分幀 `[Length u32][MessageType u16][RequestId u32][Sequence u32]` + MessagePack，big-endian；Length = 10 + Payload，Payload ≤ 1 MiB，先驗證 Length 再配置；Sequence 每方向從 1 逐一遞增；未知類型回 Error(UnknownMessageType) 後關閉；類型依角色與方向限制；MessagePack 使用 UntrustedData、深度 16、只反序列化成固定型別；Hello 帶 Capabilities，版本不符回 Error(VersionMismatch)；心跳 2 秒 / 6 秒逾時。完整規格見 PROTOCOL_V1.md | USER | 有效（G-08、G-05） |
+| D-039 | 2026-11-11 | 子連線授權：token 只經 Control 傳送；子連線上被控端送 32 位元組 nonce，控制端回 HMAC-SHA256(token, nonce ‖ 標籤 ‖ 角色)；token 30 秒內有效、一次性、限角色，存於工作階段物件（綁定帳號、Control 連線、Windows 工作階段）；重連以 SessionTokenRequest 重新申請。**TLS exporter（RFC 9266）調查結果：.NET 10 無公開 API，無法綁定 TLS 交握**，以 nonce + HMAC、30 秒、一次性與相同主機指紋核對緩解 | DEV（依 PLAN §7） | 有效（G-07） |
+| D-040 | 2026-11-11 | GUARD 驗收規格：以規劃書第十節為主要基準，合併對話版；保留規劃書 GUARD-01～05 原意，對話版以 CONV-GUARD-01～05 保留原 ID 並對應到子案例 01-a、01-b、03-a、02-a、05-a～05-d | USER | 有效（G-18） |
+| D-041 | 2026-11-11 | 登入節流改依規劃書：每來源漸進延遲 1、2、4…秒（上限 60 秒），等待期間的嘗試直接拒絕且不延長；不採鎖定；全域 token bucket（突發 10、每秒 2）；同時 Argon2 比對 2；未驗證連線上限總共 32、每來源 4；15 分鐘無失敗即忘記該來源 | DEV（依 PLAN §6） | 有效（G-01） |

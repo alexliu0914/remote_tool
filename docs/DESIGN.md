@@ -28,33 +28,34 @@
 
 ## 2. 連線（已實作）
 
-### 2.1 線路格式（D-009、D-010）
+### 2.1 線路格式（Protocol V1，D-038）
 
-`[Length 4B BE][Channel 1B][Type 1B][Payload ≤ 1 MB]`，Payload 為 MessagePack（不受信任資料模式；類型不符、格式錯誤、多餘位元組皆拒絕）。
+`[Length u32][MessageType u16][RequestId u32][Sequence u32]` + MessagePack，全部 big-endian，Payload ≤ 1 MiB。
+完整規格（欄位、上限、訊息表、錯誤處理、版本協商）見 [PROTOCOL_V1.md](PROTOCOL_V1.md)。
 
 ### 2.2 建立工作階段
 
 ```
 控制端                                              被控端
   │── TCP + TLS 1.3 (Control) ─────────────────────▶│
-  │   [核對 SPKI 指紋：不符→中止；陌生→問使用者]       │   ← 帳密尚未送出（D-016）
-  │── Hello(v1, Control) ──────────────────────────▶│
-  │◀──────────────────────────── Hello(v1, Control) ─│   版本不符→Error+關閉（D-022）
-  │── LoginRequest(帳號, 密碼) ────────────────────▶│   鎖定檢查、PBKDF2 比對（D-018）
-  │◀──────────────────────────── LoginResult ────────│   失敗 / Busy（D-020）→關閉
-  │◀──── SessionTokenGrant(Video) / (File) ──────────│   一次性 32B token（D-019）
+  │   [首次：只取指紋並關閉 → 使用者核對（D-035）]     │   ← 帳密尚未送出
+  │   [已知：指紋不符即中止]                          │
+  │── Hello(V1, Control, caps) ────────────────────▶│
+  │◀──────────────────────── Hello(V1, Control) ─────│   版本不符→Error(VersionMismatch)+關閉
+  │── LoginRequest(帳號, 密碼)  [RequestId r] ─────▶│   節流（D-041）、Argon2id（D-037）
+  │◀──────────────────────── LoginResult [r] ────────│   失敗 / Busy / TooManyAttempts→關閉
+  │◀──── SessionTokenGrant(Video) / (File)，30 秒 ────│   token 只走 Control（D-039）
   │── TCP + TLS 1.3 (Video)，指紋須與 Control 相同 ─▶│
-  │── Hello(v1, Video) → SubConnectAuth(token) ────▶│
+  │── Hello(V1, Video) ────────────────────────────▶│
+  │◀──────────── Hello + SubConnectChallenge(nonce) ─│
+  │── SubConnectAuth(HMAC(token, nonce‖標籤‖角色)) ─▶│   一次性、限角色、30 秒
   │◀─────────────────────────── SubConnectResult ────│
-  │◀──── SessionTokenGrant(Video)（補發，供重連）─────│
-  │   （File 同上）                                  │
-  │── Heartbeat(n) 每 2 秒 ────────────────────────▶│   10 秒未收到→結束（D-021）
-  │◀──────────────────────────────── Heartbeat(n) ───│
+  │   （File 同上；重連前以 SessionTokenRequest 申請） │
+  │── Heartbeat [RequestId h] 每 2 秒 ─────────────▶│   6 秒未收到→結束
+  │◀───────────────────────────── Heartbeat [h] ─────│
 ```
 
 Control 結束 → 撤銷工作階段：作廢 token、關閉 Video / File（D-008）。
-
-首次連線：上圖的指紋確認在一條探測連線上進行，使用者確認後關閉，再以釘選的指紋重新連線並送帳密（D-032）。
 
 ### 2.3 子通道擴充點
 

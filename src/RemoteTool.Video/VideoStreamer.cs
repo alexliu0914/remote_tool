@@ -91,7 +91,7 @@ public static class VideoStreamer
                 }
 
                 foreach (var packet in packets)
-                    await stream.WriteAsync(ChannelKind.Video, packet, ct).ConfigureAwait(false);
+                    await stream.WriteAsync(packet, 0, ct).ConfigureAwait(false);
 
                 var remaining = interval - TimeSpan.FromMilliseconds(Environment.TickCount64 - started);
                 if (remaining > TimeSpan.Zero)

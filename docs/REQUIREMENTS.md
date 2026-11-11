@@ -16,7 +16,7 @@ Windows 11 點對點遠端操控工具（自用）。控制端直接以 IP 連�
 | 控制端 | Windows 11 x64 |
 | 被控端 | Windows 11 x64 |
 | 執行權限 | 一般使用者權限；不使用 Windows 服務、不使用 SYSTEM |
-| 執行環境 | 原文：.NET 10（LTS）；目前程式為 .NET 8，待決定（[PLAN_GAPS](PLAN_GAPS.md) G-09） |
+| 執行環境 | .NET 10（LTS）（D-036） |
 
 ## 3. 功能需求（MVP）
 

@@ -38,5 +38,12 @@ public sealed class AuthenticationFailedException(AuthError error, int retryAfte
     };
 }
 
-/// <summary>對方送來 Error 封包或違反協定。</summary>
+/// <summary>本端判定對方送來的內容在語意上不合法（例如 token 長度不對、回應的 RequestId 不符）。</summary>
 public sealed class ProtocolViolationException(string message) : Exception(message);
+
+/// <summary>對方送來 Error 訊息（例如協定版本不相容）。</summary>
+public sealed class RemoteErrorException(ErrorCode code, string message)
+    : Exception(code == ErrorCode.VersionMismatch ? message : $"對方回報錯誤（{code}）：{message}")
+{
+    public ErrorCode Code { get; } = code;
+}

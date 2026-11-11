@@ -7,7 +7,7 @@
 
 | Gate | 狀態 | 已驗證 | 尚缺 |
 | --- | --- | --- | --- |
-| G0-01 | **PARTIAL_PASS** | 單機（127.0.0.1）Windows 11：TLS 1.3、首次指紋核對、指紋變更中止、帳密登入、失敗鎖定、三條連線、Busy、斷線偵測（紀錄 T-002、T-003，主控台版） | **兩台實體 Win11 直接 IP 連線**（TESTING.md 第五節）。未完成前不得標 PASS。A1 起控制端改為 WPF，需以新介面重跑單機回歸 R-01～R-14 |
+| G0-01 | **PARTIAL_PASS** | 單機（127.0.0.1）Windows 11：TLS 1.3、首次指紋核對、指紋變更中止、帳密登入、三條連線、Busy、斷線偵測（T-003 主控台版；T-005、T-007 WPF 版）。Protocol V1 / Argon2id / token HMAC 自動測試通過（T-010） | ① 規劃書對齊（.NET 10、Argon2id、節流、Protocol V1、token、6 秒心跳）後的**單機回歸 R-01～R-16**（Windows 實機）② **兩台實體 Win11**（TESTING.md 第五節）③ 規劃書另要求 **Video、File 中斷後獨立重連**（NET-03，尚未實作；目前任一條中斷即結束工作階段）。未完成前不得標 PASS |
 | G0-02 | IN_PROGRESS | A1 程式完成，自動測試通過（T-004）：區塊編解碼逐像素一致、經 TLS 串流、FPS 上限、擷取中斷恢復 | A1 Windows 實機測試（DXGI 與 WPF 顯示，V-01～V-13）；H.264（A2）；鍵鼠（B1） |
 | G0-03 | NOT_STARTED | — | 全部 |
 | G0-04 | NOT_STARTED | — | 全部（依 D-028，於 A2 導入 HwndHost 後驗證） |
@@ -15,15 +15,17 @@
 | G0-06 | NOT_STARTED | — | 研究項目，不阻擋 MVP |
 | G0-07 | NOT_STARTED | — | 研究項目，不阻擋 MVP |
 
-## 2. HostGuard 狀態
+## 2. HostGuard 狀態（合併定案版，見 ACCEPTANCE_CRITERIA §2）
 
-| ID | 狀態 | 備註 |
-| --- | --- | --- |
-| GUARD-01 | NOT_STARTED | B1 |
-| GUARD-02 | NOT_STARTED | B1 |
-| GUARD-03 | NOT_STARTED | B1 |
-| GUARD-04 | NOT_STARTED | B1 |
-| GUARD-05 | NOT_STARTED | B1 + 工作階段階段 |
+| ID | 子案例 | 對話版原 ID | 狀態 |
+| --- | --- | --- | --- |
+| GUARD-01 | 01-a Ctrl＋強制結束、01-b 左鍵拖曳＋強制結束、01-c Shift × 三種中斷、01-d Ctrl / 左鍵 × 未處理例外、無回應 | CONV-GUARD-01（01-a）、CONV-GUARD-02（01-b） | NOT_STARTED（B1） |
+| GUARD-02 | 02-a 本機與遠端同時按修飾鍵時崩潰、02-b 本機輸入不受影響、02-c IPC 延遲 | CONV-GUARD-04（02-a） | NOT_STARTED（B1） |
+| GUARD-03 | 03-a 連續崩潰不無限重啟、03-b 退避間隔、03-c 正常結束不重啟 | CONV-GUARD-03（03-a） | NOT_STARTED（B1） |
+| GUARD-04 | 04-a～04-d IPC 安全 | — | NOT_STARTED（B1） |
+| GUARD-05 | 05-a 鎖定、05-b 登出、05-c 切換使用者、05-d 正常結束、05-e UAC、05-f 結束 HostGuard | CONV-GUARD-05（05-a～05-d） | NOT_STARTED（B1 + 工作階段階段） |
+
+目前沒有任何 GUARD 測試結果（無 PASS 可沿用）。
 
 ## 3. 測試紀錄（只增不刪）
 
@@ -35,11 +37,15 @@
 | T-004 | 2026-11-11 | 1e4226d | 雲端 Linux（Microsoft .NET SDK 8.0.428） | Claude | A1 自動測試與回歸：Protocol 20、Connection 24、Video 22；全方案含 WPF 與 DXGI 交叉建置；Host / Controller 以 win-x64 self-contained 發佈 | PASS | 66/66，連續 3 次。**DXGI 擷取與 WPF 顯示無法在 Linux 執行，未經實機驗證** |
 | T-005 | 2026-11-11 | 3be510f 起之建置（含 1e4226d WPF 控制端） | 使用者 Windows 11 實機，單機，PowerShell 5.1 | 使用者 | TESTING.md 4.3 回歸 R-01～R-14（WPF 版） | **FAIL**（部分） | 使用者回報：① 錯誤情境的登入視窗訊息「都沒有紅字」（待釐清是顏色不對或未顯示）；② **R-13 FAIL**：指紋視窗等 30 秒以上才按信任，出現「連線失敗：A task was canceled.」；③ R-14 未完成（不清楚操作方式）；其餘項目未回報失敗。雲端以相同時序（35 秒）無法重現 R-13，推測與 Windows 環境有關 |
 | T-006 | 2026-11-11 | 本筆提交 | 雲端 Linux（Microsoft .NET SDK 8.0.428） | Claude | R-13 修正：首次連線改為「探測指紋 → 關閉連線 → 使用者核對 → 再連線」，核對期間無進行中的連線與計時器；新增控制端診斷記錄 controller.log。自動測試 Protocol 20、Connection 27、Video 22 | PASS | 69/69。新增測試：探測不送帳密、探測後慢速核對再連線、控制端逾時 1 秒而核對 2.5 秒仍成功。**R-13 需使用者在 Windows 重測** |
+| T-007 | 2026-11-11 | 8cb2c19 | 使用者 Windows 11 實機，單機 | 使用者 | T-005 待重測項：R-13、R-14、錯誤訊息顏色 | PASS | 使用者回報三項皆通過，並說明先前以 `Controller.exe 127.0.0.1`（帶參數、沿用舊主控台版用法）啟動是錯誤測試方式。T-005 的 FAIL 紀錄依規則保留；8cb2c19 的探測式指紋核對修正仍保留 |
+| T-008 | 2026-11-11 | c195c43 | 雲端 Linux（Microsoft .NET SDK 10.0.404） | Claude | G-09 升級 .NET 10：全方案建置（含 WPF、DXGI）、自動測試、套件弱點掃描 | PASS | 69/69；`dotnet list package --vulnerable --include-transitive` 無弱點；修正 SYSLIB0057 警告 |
+| T-009 | 2026-11-11 | 7ea3911 | 雲端 Linux（.NET 10） | Claude | G-02 Argon2id 與 G-01 節流：RFC 9106 測試向量、正確 / 錯誤 / 空密碼、獨立鹽、換鹽失敗、異常參數 × 6、鹽 / 雜湊長度、舊 PBKDF2 檔、竄改參數、預設參數耗時；節流加倍至 60 秒上限、等待中不延長、成功重置、遺忘、全域、IPv4 對映；連線層漸進延遲不鎖定、未驗證連線上限 | PASS | 87/87。預設參數（19456 KiB / t=2 / p=1）雲端容器建立 121 ms、驗證 134 ms。**測試發現並修正**：空密碼會讓 Argon2 套件拋例外（改為完整運算後判定失敗） |
+| T-010 | 2026-11-11 | 本筆提交 | 雲端 Linux（.NET 10） | Claude | G-08 Protocol V1 與 G-07 token、G-05 心跳：表頭逐位元組、長度範圍、1 MiB 上限、序號錯誤 / 重複 / 0、未知類型、握手前類型、角色 / 方向限制、先驗證長度再讀取、惡意 MessagePack（超大陣列 / 字串宣告、100 層巢狀）、多餘位元組；token 一次性、跨角色、錯誤角色證明、重放、過期、重新申請並作廢舊 token、子連線不傳 token；版本不符、未知類型與錯誤序號經 TLS 回 Error 並斷線、超大封包、Video 連線上登入被拒；6 秒心跳。回歸：全部既有連線與影像測試 | PASS | 127/127（Protocol 50、Connection 55、Video 22），連續 3 次。**Windows 實機回歸尚未執行** |
 
 ## 4. 尚待人工執行
 
 | 項目 | 對應 | 需要 | 步驟 |
 | --- | --- | --- | --- |
-| 單機回歸（WPF 版） | G0-01 | 一台 Windows 11 | [TESTING.md](TESTING.md) 4.3 R-01～R-14；T-005 待重測：R-13、R-14、錯誤訊息顏色。另待 PLAN_GAPS G-01～G-08 修正後整體再跑 |
+| **單機回歸（規劃書對齊後）** | G0-01 | 一台 Windows 11、.NET 10 SDK | [TESTING.md](TESTING.md) 4.1 重新設定帳密 → 4.3 R-01～R-16 |
 | A1 單機畫面 | G0-02（畫面部分） | 一台 Windows 11 | [TESTING.md](TESTING.md) 4.4 V-01～V-13 |
 | 雙機驗證 | G0-01、G0-02 | 兩台實體 Windows 11、同一區域網路 | [TESTING.md](TESTING.md) 第五節 5.6 |

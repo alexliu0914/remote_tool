@@ -12,7 +12,7 @@ public class TileCodecTests
         for (int i = 0; i < packets.Count; i++)
         {
             // 經過完整的序列化往返，確認線路格式可用
-            var frame = MessageCodec.Encode(ChannelKind.Video, packets[i]);
+            var frame = new Frame(MessageType.VideoTileUpdate, 0, 1, MessageCodec.Serialize(packets[i]));
             Assert.True(frame.Payload.Length <= FrameCodec.MaxPayloadSize);
             bool done = canvas.Apply(MessageCodec.Decode<VideoTileUpdate>(frame), out _);
             Assert.Equal(i == packets.Count - 1, done);

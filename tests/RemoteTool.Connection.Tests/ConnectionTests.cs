@@ -16,8 +16,6 @@ public class ConnectionTests
         Assert.True(host.Server.HasActiveSession);
 
         await TestHost.WaitUntilAsync(() => session.LastRoundTrip is not null);
-        // 子連線建立後被控端會補發 token 供重連
-        await TestHost.WaitUntilAsync(() => session.HasReconnectToken(ChannelKind.Video) && session.HasReconnectToken(ChannelKind.File));
         Assert.False(session.Completion.IsCompleted);
     }
 
@@ -219,97 +217,241 @@ public class ConnectionTests
         Assert.Same(session.Completion, finished);
     }
 
+    // ---------------------------------------------------------------- 子連線 token（G-07、PLAN §7）
+
     [Fact]
     public async Task SubChannelToken_IsSingleUse()
     {
         await using var host = new TestHost();
-        await using var control = await host.OpenRawAsync(ChannelKind.Control);
-        await TestHost.ReadAsync<Hello>(control);
-        await control.WriteAsync(ChannelKind.Control, new LoginRequest(TestHost.User, TestHost.Pass));
-        Assert.True((await TestHost.ReadAsync<LoginResult>(control)).Success);
+        var (control, videoToken, _) = await host.LoginRawAsync();
+        await using var _c = control;
 
-        var grants = new[] { await TestHost.ReadAsync<SessionTokenGrant>(control), await TestHost.ReadAsync<SessionTokenGrant>(control) };
-        byte[] videoToken = grants.Single(g => g.Channel == ChannelKind.Video).Token;
+        var (ok, s1, _, _) = await host.SubConnectRawAsync(ChannelKind.Video, videoToken);
+        Assert.True(ok.Success);
+        await s1.DisposeAsync();
 
-        await using (var video = await host.OpenRawAsync(ChannelKind.Video))
-        {
-            await TestHost.ReadAsync<Hello>(video);
-            await video.WriteAsync(ChannelKind.Video, new SubConnectAuth(videoToken));
-            Assert.True((await TestHost.ReadAsync<SubConnectResult>(video)).Success);
-        }
-
-        await using var replay = await host.OpenRawAsync(ChannelKind.Video);
-        await TestHost.ReadAsync<Hello>(replay);
-        await replay.WriteAsync(ChannelKind.Video, new SubConnectAuth(videoToken));
-        var result = await TestHost.ReadAsync<SubConnectResult>(replay);
-        Assert.False(result.Success);
-        Assert.Equal(AuthError.InvalidToken, result.Error);
+        var (again, s2, _, _) = await host.SubConnectRawAsync(ChannelKind.Video, videoToken);
+        await using var _s2 = s2;
+        Assert.False(again.Success);
+        Assert.Equal(AuthError.InvalidToken, again.Error);
+        await TestHost.WaitUntilAsync(() => host.Logs.Any(l => l.Contains("子連線驗證失敗") && l.Contains("127.0.0.1")));
     }
 
     [Fact]
     public async Task VideoToken_CannotOpenFileChannel()
     {
         await using var host = new TestHost();
-        await using var control = await host.OpenRawAsync(ChannelKind.Control);
-        await TestHost.ReadAsync<Hello>(control);
-        await control.WriteAsync(ChannelKind.Control, new LoginRequest(TestHost.User, TestHost.Pass));
-        await TestHost.ReadAsync<LoginResult>(control);
-        var grants = new[] { await TestHost.ReadAsync<SessionTokenGrant>(control), await TestHost.ReadAsync<SessionTokenGrant>(control) };
+        var (control, videoToken, _) = await host.LoginRawAsync();
+        await using var _c = control;
+        // 用 Video token、以 File 角色計算證明
+        var (r, s, _, _) = await host.SubConnectRawAsync(ChannelKind.File, videoToken);
+        await using var _s = s;
+        Assert.False(r.Success);
+    }
 
-        await using var file = await host.OpenRawAsync(ChannelKind.File);
-        await TestHost.ReadAsync<Hello>(file);
-        await file.WriteAsync(ChannelKind.File, new SubConnectAuth(grants.Single(g => g.Channel == ChannelKind.Video).Token));
-        Assert.False((await TestHost.ReadAsync<SubConnectResult>(file)).Success);
+    [Fact]
+    public async Task ProofForWrongRole_IsRejected()
+    {
+        await using var host = new TestHost();
+        var (control, _, fileToken) = await host.LoginRawAsync();
+        await using var _c = control;
+        // File token，但證明裡填 Video 角色
+        var (r, s, _, _) = await host.SubConnectRawAsync(ChannelKind.File, fileToken, proofRole: ChannelKind.Video);
+        await using var _s = s;
+        Assert.False(r.Success);
+    }
+
+    [Fact]
+    public async Task ReplayedProof_WithNewNonce_IsRejected()
+    {
+        await using var host = new TestHost();
+        var (control, videoToken, _) = await host.LoginRawAsync();
+        await using var _c = control;
+
+        // 竊聽者錄下一次失敗前的證明（模擬：取得一組 nonce 的正確 MAC 但不使用）
+        var probe = await host.OpenRawAsync(ChannelKind.Video);
+        var oldChallenge = await TestHost.ReadAsync<SubConnectChallenge>(probe);
+        byte[] recorded = SubConnectProof.Compute(videoToken, oldChallenge.Nonce, ChannelKind.Video);
+        await probe.DisposeAsync();
+
+        // 新連線的 nonce 不同，重放舊證明失敗
+        var (r, s, _, _) = await host.SubConnectRawAsync(ChannelKind.Video, videoToken, macOverride: recorded);
+        await using var _s = s;
+        Assert.False(r.Success);
+
+        // token 本身仍可正常使用（重放不會耗掉它）
+        var (ok, s2, _, _) = await host.SubConnectRawAsync(ChannelKind.Video, videoToken);
+        await using var _s2 = s2;
+        Assert.True(ok.Success);
+    }
+
+    [Fact]
+    public async Task ExpiredToken_IsRejected()
+    {
+        await using var host = new TestHost(tokenLifetime: TimeSpan.FromMilliseconds(300));
+        var (control, videoToken, _) = await host.LoginRawAsync();
+        await using var _c = control;
+        await Task.Delay(500);
+        var (r, s, _, _) = await host.SubConnectRawAsync(ChannelKind.Video, videoToken);
+        await using var _s = s;
+        Assert.False(r.Success);
+        await TestHost.WaitUntilAsync(() => host.Logs.Any(l => l.Contains("Expired")));
+    }
+
+    [Fact]
+    public async Task TokenRequest_OnControl_IssuesFreshToken_AndInvalidatesOld()
+    {
+        await using var host = new TestHost();
+        var (control, oldVideo, _) = await host.LoginRawAsync();
+        await using var _c = control;
+
+        uint id = control.NextRequestId();
+        await control.WriteAsync(new SessionTokenRequest(ChannelKind.Video), id);
+        var frame = (await control.ReadAsync())!.Value;
+        Assert.Equal(MessageType.SessionTokenGrant, frame.Type);
+        Assert.Equal(id, frame.RequestId);
+        var grant = MessageCodec.Decode<SessionTokenGrant>(frame);
+        Assert.Equal((ChannelKind.Video, 30), (grant.Role, grant.ExpiresInSeconds));
+        Assert.NotEqual(oldVideo, grant.Token);
+
+        var (oldResult, s1, _, _) = await host.SubConnectRawAsync(ChannelKind.Video, oldVideo);
+        await s1.DisposeAsync();
+        Assert.False(oldResult.Success);
+        var (newResult, s2, _, _) = await host.SubConnectRawAsync(ChannelKind.Video, grant.Token);
+        await using var _s2 = s2;
+        Assert.True(newResult.Success);
+    }
+
+    [Fact]
+    public async Task ControllerSession_CanRequestReconnectToken()
+    {
+        await using var host = new TestHost();
+        await using var session = await ControllerClient.ConnectAsync(host.Options());
+        var grant = await session.RequestSubChannelTokenAsync(ChannelKind.File);
+        Assert.Equal(ChannelKind.File, grant.Role);
+        Assert.Equal(ProtocolInfo.SessionTokenSize, grant.Token.Length);
     }
 
     [Fact]
     public async Task SubChannel_WithoutSession_IsRejected()
     {
         await using var host = new TestHost();
-        await using var video = await host.OpenRawAsync(ChannelKind.Video);
-        await TestHost.ReadAsync<Hello>(video);
-        await video.WriteAsync(ChannelKind.Video, new SubConnectAuth(new byte[ProtocolInfo.SessionTokenSize]));
-        Assert.False((await TestHost.ReadAsync<SubConnectResult>(video)).Success);
+        var (r, s, _, _) = await host.SubConnectRawAsync(ChannelKind.Video, new byte[ProtocolInfo.SessionTokenSize]);
+        await using var _s = s;
+        Assert.False(r.Success);
     }
+
+    [Fact]
+    public async Task TokenIsNeverSentOnSubConnection()
+    {
+        // 結構性檢查：子連線上控制端唯一送出的驗證資料是 32 位元組 MAC，與 token 不同
+        await using var host = new TestHost();
+        var (control, videoToken, _) = await host.LoginRawAsync();
+        await using var _c = control;
+        var (r, s, nonce, mac) = await host.SubConnectRawAsync(ChannelKind.Video, videoToken);
+        await using var _s = s;
+        Assert.True(r.Success);
+        Assert.NotEqual(videoToken, mac);
+        Assert.Equal(32, nonce.Length);
+    }
+
+    // ---------------------------------------------------------------- 心跳與協定錯誤
 
     [Fact]
     public async Task MissingHeartbeat_EndsSession()
     {
         await using var host = new TestHost(heartbeatTimeout: TimeSpan.FromMilliseconds(500));
-        await using var control = await host.OpenRawAsync(ChannelKind.Control);
-        await TestHost.ReadAsync<Hello>(control);
-        await control.WriteAsync(ChannelKind.Control, new LoginRequest(TestHost.User, TestHost.Pass));
-        Assert.True((await TestHost.ReadAsync<LoginResult>(control)).Success);
+        var (control, _, _) = await host.LoginRawAsync();
+        await using var _c = control;
         Assert.True(host.Server.HasActiveSession);
-
         // 不送心跳
         await TestHost.WaitUntilAsync(() => !host.Server.HasActiveSession, 5000);
     }
 
     [Fact]
-    public async Task ProtocolVersionMismatch_GetsError()
+    public void HeartbeatDefaults_MatchPlan()
+    {
+        Assert.Equal(2, ProtocolInfo.HeartbeatIntervalSeconds);
+        Assert.Equal(6, ProtocolInfo.HeartbeatTimeoutSeconds);
+        var o = new ControllerConnectOptions { Host = "x", Username = "u", Password = "p", KnownHosts = new KnownHostsStore(null), ConfirmNewHost = (_, _) => false };
+        Assert.Equal(TimeSpan.FromSeconds(6), o.HeartbeatTimeout);
+    }
+
+    [Fact]
+    public async Task ProtocolVersionMismatch_GetsVersionError()
     {
         await using var host = new TestHost();
-        await using var control = await host.OpenRawAsync(ChannelKind.Control, version: 99);
+        await using var control = await host.OpenRawAsync(ChannelKind.Control, version: 99, readHello: false);
         var error = await TestHost.ReadAsync<ErrorMessage>(control);
+        Assert.Equal(ErrorCode.VersionMismatch, error.Code);
         Assert.Contains("版本", error.Message);
     }
 
     [Fact]
-    public async Task FrameOnWrongChannel_ClosesConnection()
+    public async Task UnknownMessageType_GetsErrorAndDisconnect()
     {
         await using var host = new TestHost();
-        // Control 連線上送出標示為 Video 通道的封包
-        await using var stream = await host.OpenRawAsync(ChannelKind.Control);
-        await TestHost.ReadAsync<Hello>(stream);
-        await stream.WriteAsync(ChannelKind.Video, new LoginRequest(TestHost.User, TestHost.Pass));
-        using var cts = new CancellationTokenSource(5000);
-        // 被控端應直接關閉連線
-        await Assert.ThrowsAnyAsync<Exception>(async () =>
-        {
-            var f = await stream.ReadAsync(cts.Token);
-            if (f is null) throw new EndOfStreamException();
-        });
-        Assert.False(host.Server.HasActiveSession);
+        var (control, _, _) = await host.LoginRawAsync();
+        await using var _c = control;
+
+        // 直接寫入未知類型 199 的原始封包（序號接續：Hello=1, Login=2 → 3）
+        var stream = GetInnerStream(control);
+        var raw = FrameCodec.Encode(new Frame((MessageType)199, 0, 3, Array.Empty<byte>()));
+        await stream.WriteAsync(raw);
+        await stream.FlushAsync();
+
+        var error = await TestHost.ReadAsync<ErrorMessage>(control);
+        Assert.Equal(ErrorCode.UnknownMessageType, error.Code);
+        await TestHost.WaitUntilAsync(() => !host.Server.HasActiveSession);
     }
+
+    [Fact]
+    public async Task WrongSequence_GetsErrorAndDisconnect()
+    {
+        await using var host = new TestHost();
+        var (control, _, _) = await host.LoginRawAsync();
+        await using var _c = control;
+
+        var stream = GetInnerStream(control);
+        var raw = FrameCodec.Encode(new Frame(MessageType.Heartbeat, 1, 99, MessageCodec.Serialize(new Heartbeat(0))));
+        await stream.WriteAsync(raw);
+        await stream.FlushAsync();
+
+        var error = await TestHost.ReadAsync<ErrorMessage>(control);
+        Assert.Equal(ErrorCode.ProtocolViolation, error.Code);
+        await TestHost.WaitUntilAsync(() => !host.Server.HasActiveSession);
+    }
+
+    [Fact]
+    public async Task OversizedFrame_IsRejected()
+    {
+        await using var host = new TestHost();
+        await using var control = await host.OpenRawAsync(ChannelKind.Control);
+        var stream = GetInnerStream(control);
+        await stream.WriteAsync(new byte[] { 0x7F, 0xFF, 0xFF, 0xFF, 0, 2 }); // Length ≈ 2 GiB
+        await stream.FlushAsync();
+
+        var error = await TestHost.ReadAsync<ErrorMessage>(control);
+        Assert.Equal(ErrorCode.ProtocolViolation, error.Code);
+        Assert.Equal(0, host.Server.LoginAttempts);
+    }
+
+    [Fact]
+    public async Task LoginOnVideoConnection_IsRejected()
+    {
+        await using var host = new TestHost();
+        await using var video = await host.OpenRawAsync(ChannelKind.Video);
+        await TestHost.ReadAsync<SubConnectChallenge>(video);
+        var stream = GetInnerStream(video);
+        // Video 連線上送 LoginRequest（序號 2）
+        var raw = FrameCodec.Encode(new Frame(MessageType.LoginRequest, 1, 2, MessageCodec.Serialize(new LoginRequest(TestHost.User, TestHost.Pass))));
+        await stream.WriteAsync(raw);
+        await stream.FlushAsync();
+        var error = await TestHost.ReadAsync<ErrorMessage>(video);
+        Assert.Equal(ErrorCode.ProtocolViolation, error.Code);
+        Assert.Equal(0, host.Server.LoginAttempts);
+    }
+
+    private static Stream GetInnerStream(FrameStream fs)
+        => (Stream)typeof(FrameStream).GetField("_stream", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!.GetValue(fs)!;
 }

@@ -1,6 +1,7 @@
 using System.Net.Security;
 using System.Net.Sockets;
 using System.Security.Authentication;
+using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using RemoteTool.Protocol;
 
@@ -16,30 +17,33 @@ public sealed class ControllerConnectOptions
 
     /// <summary>
     /// 首次連到某主機時呼叫：參數為「位址:埠」與指紋，回傳 true 表示使用者核對無誤、願意信任。
-    /// 回傳 false 則中止連線，帳密不會送出。
+    /// 回傳 false 則中止連線，帳密不會送出。介面通常先用 <see cref="ControllerClient.ProbeFingerprintAsync"/>
+    /// 自行核對並記住，這裡只作為後備。
     /// </summary>
     public required Func<string, string, bool> ConfirmNewHost { get; init; }
 
     /// <summary>從開始連線到三條連線都建立完成的時限。</summary>
     public TimeSpan ConnectTimeout { get; init; } = TimeSpan.FromSeconds(20);
-    public TimeSpan HeartbeatInterval { get; init; } = TimeSpan.FromSeconds(2);
-    /// <summary>多久沒收到被控端的心跳回覆就判定斷線。</summary>
-    public TimeSpan HeartbeatTimeout { get; init; } = TimeSpan.FromSeconds(10);
+    public TimeSpan HeartbeatInterval { get; init; } = TimeSpan.FromSeconds(ProtocolInfo.HeartbeatIntervalSeconds);
+    /// <summary>多久沒收到被控端的心跳回覆就判定斷線（PLAN §7：6 秒）。</summary>
+    public TimeSpan HeartbeatTimeout { get; init; } = TimeSpan.FromSeconds(ProtocolInfo.HeartbeatTimeoutSeconds);
 
     /// <summary>收到 Video 封包時呼叫（在背景執行緒）。拋出例外會結束工作階段。</summary>
     public Action<Frame>? VideoFrameReceived { get; init; }
 }
 
 /// <summary>
-/// 控制端連線流程：
+/// 控制端連線流程（Protocol V1）：
 ///   1. 開 Control TLS 1.3 連線，取得被控端 SPKI 指紋
 ///   2. 與已知指紋比對；不同即中止，首次則請使用者確認 —— 兩者都在送出帳密「之前」
 ///   3. Hello → LoginRequest → LoginResult → 收 Video / File 的一次性 token
-///   4. 以 token 開 Video、File 連線（指紋必須與 Control 相同）
-///   5. 背景送心跳、接收補發的 token
+///   4. 開 Video、File 連線（指紋必須與 Control 相同），以 nonce + HMAC 證明持有 token
+///   5. 背景送心跳
 /// </summary>
 public static class ControllerClient
 {
+    private static readonly string[] ClientCapabilities = [];
+
     public static async Task<ControllerSession> ConnectAsync(ControllerConnectOptions options, CancellationToken cancellationToken = default)
     {
         string hostKey = KnownHostsStore.KeyFor(options.Host, options.Port);
@@ -58,8 +62,7 @@ public static class ControllerClient
 
             if (known is null)
             {
-                // 使用者核對指紋可能很久，超過被控端的握手時限；因此暫停逾時，
-                // 確認後關閉這條探測連線，以已釘選的指紋重新連線。
+                // 後備路徑：使用者核對期間暫停逾時，確認後以釘選的指紋重新連線（D-032 / D-035）。
                 connectCts.CancelAfter(Timeout.InfiniteTimeSpan);
                 bool trusted = options.ConfirmNewHost(hostKey, fingerprint);
                 await control.DisposeAsync().ConfigureAwait(false);
@@ -76,17 +79,20 @@ public static class ControllerClient
 
             // 3. Hello 與登入
             await ExchangeHelloAsync(control, ChannelKind.Control, ct).ConfigureAwait(false);
-            await control.WriteAsync(ChannelKind.Control, new LoginRequest(options.Username, options.Password), ct).ConfigureAwait(false);
-            var result = await control.ReadMessageAsync<LoginResult>(ChannelKind.Control, ct).ConfigureAwait(false);
+            uint loginId = control.NextRequestId();
+            await control.WriteAsync(new LoginRequest(options.Username, options.Password), loginId, ct).ConfigureAwait(false);
+            var (resultFrame, result) = await control.ReadMessageAsync<LoginResult>(ct).ConfigureAwait(false);
+            if (resultFrame.RequestId != loginId)
+                throw new ProtocolViolationException("LoginResult 的 RequestId 不符");
             if (!result.Success)
                 throw new AuthenticationFailedException(result.Error, result.RetryAfterSeconds);
 
             var tokens = new Dictionary<ChannelKind, byte[]>();
             while (tokens.Count < 2)
             {
-                var grant = await control.ReadMessageAsync<SessionTokenGrant>(ChannelKind.Control, ct).ConfigureAwait(false);
+                var (_, grant) = await control.ReadMessageAsync<SessionTokenGrant>(ct).ConfigureAwait(false);
                 ValidateGrant(grant);
-                tokens[grant.Channel] = grant.Token;
+                tokens[grant.Role] = grant.Token;
             }
 
             // 4. 子連線
@@ -94,6 +100,7 @@ public static class ControllerClient
             opened.Add(video);
             var file = await OpenSubChannelAsync(options, hostKey, fingerprint, ChannelKind.File, tokens[ChannelKind.File], ct).ConfigureAwait(false);
             opened.Add(file);
+            foreach (var t in tokens.Values) CryptographicOperations.ZeroMemory(t);
 
             // 5. 背景迴圈
             var session = new ControllerSession(hostKey, fingerprint, control, video, file, options);
@@ -125,23 +132,28 @@ public static class ControllerClient
         return fingerprint;
     }
 
-    private static void ValidateGrant(SessionTokenGrant grant)
+    internal static void ValidateGrant(SessionTokenGrant grant)
     {
-        if (grant.Channel is not (ChannelKind.Video or ChannelKind.File)
+        if (grant.Role is not (ChannelKind.Video or ChannelKind.File)
             || grant.Token is null || grant.Token.Length != ProtocolInfo.SessionTokenSize)
             throw new ProtocolViolationException("SessionTokenGrant 內容不合法");
     }
 
     private static async Task<FrameStream> OpenSubChannelAsync(
         ControllerConnectOptions options, string hostKey, string fingerprint,
-        ChannelKind channel, byte[] token, CancellationToken ct)
+        ChannelKind role, byte[] token, CancellationToken ct)
     {
         var (stream, _) = await OpenTlsAsync(options.Host, options.Port, fingerprint, hostKey, ct).ConfigureAwait(false);
         try
         {
-            await ExchangeHelloAsync(stream, channel, ct).ConfigureAwait(false);
-            await stream.WriteAsync(channel, new SubConnectAuth(token), ct).ConfigureAwait(false);
-            var result = await stream.ReadMessageAsync<SubConnectResult>(channel, ct).ConfigureAwait(false);
+            await ExchangeHelloAsync(stream, role, ct).ConfigureAwait(false);
+            var (_, challenge) = await stream.ReadMessageAsync<SubConnectChallenge>(ct).ConfigureAwait(false);
+            if (challenge.Nonce is null || challenge.Nonce.Length != ProtocolInfo.SubConnectNonceSize)
+                throw new ProtocolViolationException("SubConnectChallenge 內容不合法");
+
+            await stream.WriteAsync(new SubConnectAuth(SubConnectProof.Compute(token, challenge.Nonce, role)),
+                cancellationToken: ct).ConfigureAwait(false);
+            var (_, result) = await stream.ReadMessageAsync<SubConnectResult>(ct).ConfigureAwait(false);
             if (!result.Success)
                 throw new AuthenticationFailedException(result.Error);
             return stream;
@@ -153,12 +165,16 @@ public static class ControllerClient
         }
     }
 
-    private static async Task ExchangeHelloAsync(FrameStream stream, ChannelKind channel, CancellationToken ct)
+    private static async Task ExchangeHelloAsync(FrameStream stream, ChannelKind role, CancellationToken ct)
     {
-        await stream.WriteAsync(channel, new Hello(ProtocolInfo.Version, channel), ct).ConfigureAwait(false);
-        var reply = await stream.ReadMessageAsync<Hello>(channel, ct).ConfigureAwait(false);
-        if (reply.ProtocolVersion != ProtocolInfo.Version || reply.Channel != channel)
-            throw new ProtocolViolationException($"Hello 不符：版本 {reply.ProtocolVersion}，通道 {reply.Channel}");
+        await stream.WriteAsync(new Hello(ProtocolInfo.Version, role, ClientCapabilities), cancellationToken: ct).ConfigureAwait(false);
+        var (_, reply) = await stream.ReadMessageAsync<Hello>(ct).ConfigureAwait(false);
+        if (reply.ProtocolVersion != ProtocolInfo.Version)
+            throw new RemoteErrorException(ErrorCode.VersionMismatch,
+                $"協定版本不相容：被控端 V{reply.ProtocolVersion}，控制端 V{ProtocolInfo.Version}，請更新兩端程式");
+        if (reply.Role != role)
+            throw new ProtocolViolationException($"Hello 角色不符：預期 {role}，收到 {reply.Role}");
+        stream.Role = role;
     }
 
     /// <summary>
@@ -190,7 +206,7 @@ public static class ControllerClient
                 },
             }, ct).ConfigureAwait(false);
 
-            return (new FrameStream(ssl), observed!);
+            return (new FrameStream(ssl, Endpoint.Controller), observed!);
         }
         catch (AuthenticationException) when (expectedFingerprint is not null && observed is not null && observed != expectedFingerprint)
         {
@@ -216,11 +232,11 @@ public sealed class ControllerSession : IAsyncDisposable
 {
     private readonly ControllerConnectOptions _options;
     private readonly CancellationTokenSource _cts = new();
-    private readonly Dictionary<ChannelKind, byte[]> _reconnectTokens = new();
-    private readonly object _gate = new();
     private readonly TaskCompletionSource<string> _closed = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly Dictionary<uint, TaskCompletionSource<SessionTokenGrant>> _tokenRequests = new();
     private Task? _loops;
     private long _lastRoundTripTicks = -1;
+    private long _videoBytesReceived;
 
     internal ControllerSession(string hostKey, string fingerprint,
         FrameStream control, FrameStream video, FrameStream file, ControllerConnectOptions options)
@@ -252,11 +268,34 @@ public sealed class ControllerSession : IAsyncDisposable
         }
     }
 
-    /// <summary>被控端最近補發、可供重連使用的 token。</summary>
-    public bool HasReconnectToken(ChannelKind channel)
+    /// <summary>Video 連線累計收到的位元組數（統計用）。</summary>
+    public long VideoBytesReceived => Interlocked.Read(ref _videoBytesReceived);
+
+    /// <summary>
+    /// 向 Control 申請新的子連線 token（子連線重連前使用，PLAN §7）。
+    /// 回傳的 token 須在 <see cref="SessionTokenGrant.ExpiresInSeconds"/> 內使用。
+    /// </summary>
+    public async Task<SessionTokenGrant> RequestSubChannelTokenAsync(ChannelKind role, CancellationToken cancellationToken = default)
     {
-        lock (_gate) return _reconnectTokens.ContainsKey(channel);
+        uint id = ControlChannel.NextRequestId();
+        var tcs = new TaskCompletionSource<SessionTokenGrant>(TaskCreationOptions.RunContinuationsAsynchronously);
+        lock (_tokenRequests) _tokenRequests[id] = tcs;
+        try
+        {
+            await ControlChannel.WriteAsync(new SessionTokenRequest(role), id, cancellationToken).ConfigureAwait(false);
+            using var reg = cancellationToken.Register(() => tcs.TrySetCanceled(cancellationToken));
+            using var closedReg = _cts.Token.Register(() => tcs.TrySetException(new IOException("工作階段已結束")));
+            return await tcs.Task.ConfigureAwait(false);
+        }
+        finally
+        {
+            lock (_tokenRequests) _tokenRequests.Remove(id);
+        }
     }
+
+    /// <summary>要求被控端下一次送出完整畫面。</summary>
+    public ValueTask RequestKeyframeAsync(long lastFrameId, CancellationToken cancellationToken = default)
+        => VideoChannel.WriteAsync(new KeyframeRequest(lastFrameId), cancellationToken: cancellationToken);
 
     internal void Start()
     {
@@ -282,15 +321,14 @@ public sealed class ControllerSession : IAsyncDisposable
             reason = $"{name} 連線中斷：{ex.Message}";
         }
 
-        // 任一條連線結束即結束整個工作階段（子通道重連於後續里程碑實作）。
+        // 任一條連線結束即結束整個工作階段（子連線獨立重連於後續里程碑實作，NET-03）。
         _closed.TrySetResult(reason);
         _cts.Cancel();
     }
 
     private async Task<string> ControlLoopAsync(CancellationToken ct)
     {
-        var pending = new Dictionary<long, long>();
-        long sequence = 0;
+        var pending = new Dictionary<uint, long>();
         long lastReply = Environment.TickCount64;
         var timeoutMs = (long)_options.HeartbeatTimeout.TotalMilliseconds;
 
@@ -301,9 +339,9 @@ public sealed class ControllerSession : IAsyncDisposable
             {
                 if (Environment.TickCount64 - Interlocked.Read(ref lastReply) > timeoutMs)
                     throw new TimeoutException("被控端心跳逾時");
-                long seq = Interlocked.Increment(ref sequence);
-                lock (pending) pending[seq] = Environment.TickCount64;
-                await ControlChannel.WriteAsync(ChannelKind.Control, new Heartbeat(seq), ct).ConfigureAwait(false);
+                uint id = ControlChannel.NextRequestId();
+                lock (pending) pending[id] = Environment.TickCount64;
+                await ControlChannel.WriteAsync(new Heartbeat(Environment.TickCount64), id, ct).ConfigureAwait(false);
             }
             while (await timer.WaitForNextTickAsync(ct).ConfigureAwait(false));
         }, ct);
@@ -315,16 +353,14 @@ public sealed class ControllerSession : IAsyncDisposable
                 Frame? frame = await ControlChannel.ReadAsync(ct).ConfigureAwait(false);
                 if (frame is null) return "被控端已結束連線";
                 var f = frame.Value;
-                if (f.Channel != ChannelKind.Control)
-                    throw new ProtocolViolationException($"Control 連線收到 {f.Channel} 封包");
 
                 switch (f.Type)
                 {
                     case MessageType.Heartbeat:
-                        var hb = MessageCodec.Decode<Heartbeat>(f);
+                        MessageCodec.Decode<Heartbeat>(f);
                         long sentAt;
                         bool found;
-                        lock (pending) found = pending.Remove(hb.Sequence, out sentAt);
+                        lock (pending) found = pending.Remove(f.RequestId, out sentAt);
                         if (found)
                         {
                             Interlocked.Exchange(ref lastReply, Environment.TickCount64);
@@ -334,15 +370,16 @@ public sealed class ControllerSession : IAsyncDisposable
                         break;
                     case MessageType.SessionTokenGrant:
                         var grant = MessageCodec.Decode<SessionTokenGrant>(f);
-                        if (grant.Channel is ChannelKind.Video or ChannelKind.File && grant.Token?.Length == ProtocolInfo.SessionTokenSize)
-                        {
-                            lock (_gate) _reconnectTokens[grant.Channel] = grant.Token;
-                        }
+                        ControllerClient.ValidateGrant(grant);
+                        TaskCompletionSource<SessionTokenGrant>? tcs;
+                        lock (_tokenRequests) _tokenRequests.TryGetValue(f.RequestId, out tcs);
+                        tcs?.TrySetResult(grant);
                         break;
                     case MessageType.Error:
-                        return "被控端回報錯誤：" + MessageCodec.Decode<ErrorMessage>(f).Message;
+                        var err = MessageCodec.Decode<ErrorMessage>(f);
+                        return $"被控端回報錯誤（{err.Code}）：{err.Message}";
                     default:
-                        break; // 其他訊息於後續里程碑實作
+                        break; // V1 已定義、尚未實作的訊息
                 }
             }
         }, ct);
@@ -353,28 +390,23 @@ public sealed class ControllerSession : IAsyncDisposable
         return "心跳停止";
     }
 
-    private async Task<string> DrainAsync(FrameStream stream, ChannelKind channel, Action<Frame>? handler, CancellationToken ct)
+    private async Task<string> DrainAsync(FrameStream stream, ChannelKind role, Action<Frame>? handler, CancellationToken ct)
     {
         while (true)
         {
             Frame? frame = await stream.ReadAsync(ct).ConfigureAwait(false);
-            if (frame is null) return $"被控端已關閉 {channel} 連線";
-            if (frame.Value.Channel != channel)
-                throw new ProtocolViolationException($"{channel} 連線收到 {frame.Value.Channel} 封包");
-            if (channel == ChannelKind.Video)
-                Interlocked.Add(ref _videoBytesReceived, frame.Value.Payload.Length + 6);
-            handler?.Invoke(frame.Value);
+            if (frame is null) return $"被控端已關閉 {role} 連線";
+            var f = frame.Value;
+            if (f.Type == MessageType.Error)
+            {
+                var err = MessageCodec.Decode<ErrorMessage>(f);
+                return $"被控端回報錯誤（{err.Code}）：{err.Message}";
+            }
+            if (role == ChannelKind.Video)
+                Interlocked.Add(ref _videoBytesReceived, f.Payload.Length + FrameCodec.LengthPrefixSize + FrameCodec.HeaderSize);
+            handler?.Invoke(f);
         }
     }
-
-    private long _videoBytesReceived;
-
-    /// <summary>Video 連線累計收到的位元組數（統計用）。</summary>
-    public long VideoBytesReceived => Interlocked.Read(ref _videoBytesReceived);
-
-    /// <summary>要求被控端下一次送出完整畫面。</summary>
-    public ValueTask RequestKeyframeAsync(long lastFrameId, CancellationToken cancellationToken = default)
-        => VideoChannel.WriteAsync(ChannelKind.Video, new KeyframeRequest(lastFrameId), cancellationToken);
 
     public async ValueTask DisposeAsync()
     {

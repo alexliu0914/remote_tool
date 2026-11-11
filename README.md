@@ -2,7 +2,7 @@
 
 Windows 11 點對點遠端操控工具（自用）。控制端直接以 IP 連到被控端，不經任何中央協調、雲端或中繼伺服器。
 
-設計依據：規劃書 **V2.2.2 基線**（Spike 0 階段）。
+設計依據：規劃書 **V2.2.2 基線**（Spike 0 階段），原文見 [docs/plan/PLAN_V2.2.2.md](docs/plan/PLAN_V2.2.2.md)。
 
 ## 範圍
 
@@ -27,7 +27,7 @@ Windows 11 點對點遠端操控工具（自用）。控制端直接以 IP 連�
 
 ## 建置
 
-需要 .NET SDK 8.0 以上。
+需要 .NET SDK 8.0 以上（規劃書指定 .NET 10，升級待決定，見 docs/PLAN_GAPS.md G-09）。
 
 ```
 dotnet restore RemoteTool.sln
@@ -54,6 +54,8 @@ dotnet test    RemoteTool.sln -c Release
 
 | 文件 | 內容 |
 | --- | --- |
+| [docs/plan/PLAN_V2.2.2.md](docs/plan/PLAN_V2.2.2.md) | **規劃書原文（最高依據）** |
+| [docs/PLAN_GAPS.md](docs/PLAN_GAPS.md) | 規劃書與目前文件、程式的差異與處理狀態 |
 | [docs/REQUIREMENTS.md](docs/REQUIREMENTS.md) | MVP 範圍、功能與非功能需求、不做的項目 |
 | [docs/DESIGN.md](docs/DESIGN.md) | 架構、連線流程、畫面 / 輸入 / 檔案設計與實作狀態 |
 | [docs/DECISIONS.md](docs/DECISIONS.md) | 已核准的架構決議（只增不刪） |

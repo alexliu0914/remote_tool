@@ -38,13 +38,20 @@ public static class FrameCodec
             throw new ArgumentOutOfRangeException(nameof(frame), $"Payload {payloadLength} 超過上限 {MaxPayloadSize}");
 
         var buffer = new byte[LengthPrefixSize + HeaderSize + payloadLength];
-        var span = buffer.AsSpan();
-        BinaryPrimitives.WriteUInt32BigEndian(span, (uint)(HeaderSize + payloadLength));
-        BinaryPrimitives.WriteUInt16BigEndian(span[4..], (ushort)frame.Type);
-        BinaryPrimitives.WriteUInt32BigEndian(span[6..], frame.RequestId);
-        BinaryPrimitives.WriteUInt32BigEndian(span[10..], frame.Sequence);
-        frame.Payload.Span.CopyTo(span[14..]);
+        WriteHeader(buffer, frame.Type, frame.RequestId, frame.Sequence, payloadLength);
+        frame.Payload.Span.CopyTo(buffer.AsSpan(LengthPrefixSize + HeaderSize));
         return buffer;
+    }
+
+    /// <summary>把 14 位元組表頭（含 Length）寫到 <paramref name="destination"/> 開頭。</summary>
+    public static void WriteHeader(Span<byte> destination, MessageType type, uint requestId, uint sequence, int payloadLength)
+    {
+        if ((uint)payloadLength > MaxPayloadSize)
+            throw new ArgumentOutOfRangeException(nameof(payloadLength), $"Payload {payloadLength} 超過上限 {MaxPayloadSize}");
+        BinaryPrimitives.WriteUInt32BigEndian(destination, (uint)(HeaderSize + payloadLength));
+        BinaryPrimitives.WriteUInt16BigEndian(destination[4..], (ushort)type);
+        BinaryPrimitives.WriteUInt32BigEndian(destination[6..], requestId);
+        BinaryPrimitives.WriteUInt32BigEndian(destination[10..], sequence);
     }
 
     /// <summary>
@@ -64,19 +71,20 @@ public static class FrameCodec
         int total = LengthPrefixSize + (int)lengthValue;
         if (buffer.Length < total) return false;
 
-        frame = DecodeBody(buffer.Slice(LengthPrefixSize, (int)lengthValue).ToArray());
+        byte[] body = buffer.Slice(LengthPrefixSize, (int)lengthValue).ToArray();
+        frame = DecodeBody(body, body.Length);
         consumed = total;
         return true;
     }
 
     /// <summary>解析 Length 之後的內容（長度已驗證）。</summary>
-    internal static Frame DecodeBody(byte[] body)
+    internal static Frame DecodeBody(byte[] body, int length)
     {
-        var span = body.AsSpan();
+        var span = body.AsSpan(0, length);
         var type = (MessageType)BinaryPrimitives.ReadUInt16BigEndian(span);
         uint requestId = BinaryPrimitives.ReadUInt32BigEndian(span[2..]);
         uint sequence = BinaryPrimitives.ReadUInt32BigEndian(span[6..]);
-        return new Frame(type, requestId, sequence, body.AsMemory(HeaderSize));
+        return new Frame(type, requestId, sequence, body.AsMemory(HeaderSize, length - HeaderSize));
     }
 
     /// <summary>檢查 Length 欄位。</summary>

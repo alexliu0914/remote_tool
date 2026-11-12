@@ -129,7 +129,7 @@
 | SubConnectResult | Success、Error(AuthError) |
 | Heartbeat | Timestamp(long，送出方自用) |
 | KeyframeRequest | LastFrameId |
-| VideoTileUpdate | FrameId、FrameWidth、FrameHeight、EndOfFrame、Tiles[]{X、Y、Width、Height、Data} |
+| VideoTileUpdate | FrameId、FrameWidth、FrameHeight、EndOfFrame、Tiles[]{X、Y、Width、Height、Data}、IsKeyframe（2026-11-12 加入，全部區塊時為 true） |
 
 AuthError：0 None、1 BadCredentials、2 TooManyAttempts、3 Busy、4 InvalidToken。
 

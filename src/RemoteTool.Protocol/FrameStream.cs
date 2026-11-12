@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Buffers.Binary;
 
 namespace RemoteTool.Protocol;
@@ -23,6 +24,9 @@ public sealed class FrameStream : IAsyncDisposable
     private readonly Endpoint _local;
     private readonly SemaphoreSlim _writeLock = new(1, 1);
     private readonly byte[] _lengthBuffer = new byte[FrameCodec.LengthPrefixSize];
+    // 送出緩衝區：每條連線一個、在寫入鎖內重複使用，避免每個封包配置大型陣列（V-12）。
+    private readonly ArrayBufferWriter<byte> _writeBuffer = new(4096);
+    private byte[]? _readBuffer;
     private uint _nextWriteSequence = 1;
     private uint _nextReadSequence = 1;
     private int _nextRequestId;
@@ -36,6 +40,12 @@ public sealed class FrameStream : IAsyncDisposable
     }
 
     private Endpoint Remote => _local == Endpoint.Host ? Endpoint.Controller : Endpoint.Host;
+
+    /// <summary>
+    /// 重複使用讀取緩衝區：開啟後，<see cref="ReadAsync"/> 回傳的 Payload <b>只在下一次 ReadAsync 之前有效</b>。
+    /// 只用在「收到後立即同步處理完」的連線（例如控制端的 Video），可避免每個大封包配置新陣列。
+    /// </summary>
+    public bool ReuseReadBuffer { get; init; }
 
     /// <summary>連線角色。Hello 交換完成後設定；設定前只允許 Hello 與 Error。</summary>
     public ChannelKind? Role { get; set; }
@@ -68,17 +78,28 @@ public sealed class FrameStream : IAsyncDisposable
         uint lengthValue = BinaryPrimitives.ReadUInt32BigEndian(_lengthBuffer);
         FrameCodec.ValidateLength(lengthValue); // 先驗證，再配置
 
-        var body = new byte[lengthValue];
+        byte[] body;
+        if (ReuseReadBuffer)
+        {
+            if (_readBuffer is null || _readBuffer.Length < lengthValue)
+                _readBuffer = new byte[Math.Max(lengthValue, Math.Min(FrameCodec.MaxLengthValue, (uint)(_readBuffer?.Length ?? 0) * 2))];
+            body = _readBuffer;
+        }
+        else
+        {
+            body = new byte[lengthValue];
+        }
+
         try
         {
-            await _stream.ReadExactlyAsync(body, cancellationToken).ConfigureAwait(false);
+            await _stream.ReadExactlyAsync(body.AsMemory(0, (int)lengthValue), cancellationToken).ConfigureAwait(false);
         }
         catch (EndOfStreamException ex)
         {
             throw new EndOfStreamException("封包內容讀到一半連線即中斷", ex);
         }
 
-        var frame = FrameCodec.DecodeBody(body);
+        var frame = FrameCodec.DecodeBody(body, (int)lengthValue);
 
         if (frame.Sequence != _nextReadSequence)
             throw new ProtocolException(ErrorCode.ProtocolViolation, $"序號錯誤：預期 {_nextReadSequence}，收到 {frame.Sequence}");
@@ -101,17 +122,27 @@ public sealed class FrameStream : IAsyncDisposable
     {
         if (!ProtocolRules.IsAllowed(T.Type, Role, _local))
             throw new InvalidOperationException($"{T.Type} 不允許由 {_local} 在 {(Role?.ToString() ?? "握手前")} 連線送出");
-
-        byte[] payload = MessageCodec.Serialize(message);
         await _writeLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             uint sequence = _nextWriteSequence;
             if (sequence == 0) throw new InvalidOperationException("序號用盡，須重新連線");
-            byte[] bytes = FrameCodec.Encode(new Frame(T.Type, requestId, sequence, payload));
-            await _stream.WriteAsync(bytes, cancellationToken).ConfigureAwait(false);
+
+            // 表頭先預留，MessagePack 直接序列化到同一個重複使用的緩衝區，再回填表頭。
+            _writeBuffer.ResetWrittenCount();
+            _writeBuffer.GetSpan(FrameCodec.LengthPrefixSize + FrameCodec.HeaderSize);
+            _writeBuffer.Advance(FrameCodec.LengthPrefixSize + FrameCodec.HeaderSize);
+            MessageCodec.Serialize(_writeBuffer, message);
+            int payloadLength = _writeBuffer.WrittenCount - FrameCodec.LengthPrefixSize - FrameCodec.HeaderSize;
+            if (payloadLength > FrameCodec.MaxPayloadSize)
+                throw new InvalidOperationException($"{T.Type} 內容 {payloadLength} 位元組超過上限 {FrameCodec.MaxPayloadSize}");
+
+            var memory = _writeBuffer.WrittenMemory;
+            FrameCodec.WriteHeader(MemoryMarshalHelper.AsWritable(memory).Span, T.Type, requestId, sequence, payloadLength);
+            await _stream.WriteAsync(memory, cancellationToken).ConfigureAwait(false);
             await _stream.FlushAsync(cancellationToken).ConfigureAwait(false);
             _nextWriteSequence = sequence + 1;
+            // 緩衝區保留重複使用；大小受單一封包上限約束（約 1 MiB，擴充時最多約 2 MiB）。
         }
         finally
         {
@@ -124,4 +155,11 @@ public sealed class FrameStream : IAsyncDisposable
         await _stream.DisposeAsync().ConfigureAwait(false);
         _writeLock.Dispose();
     }
+}
+
+internal static class MemoryMarshalHelper
+{
+    /// <summary>ArrayBufferWriter 的 WrittenMemory 是唯讀包裝，底層為本類別自有的陣列，可安全回填表頭。</summary>
+    public static Memory<byte> AsWritable(ReadOnlyMemory<byte> memory)
+        => System.Runtime.InteropServices.MemoryMarshal.AsMemory(memory);
 }

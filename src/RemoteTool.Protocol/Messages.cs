@@ -151,6 +151,7 @@ public sealed record VideoTile(
 /// <summary>
 /// A1 PoC 影像格式（D-027）：一張畫面的變動區塊，可能分成多個封包，
 /// 最後一個封包 <see cref="EndOfFrame"/> 為 true，控制端此時才更新顯示。
+/// <see cref="IsKeyframe"/> 為 true 表示這張畫面送出全部區塊（首張、重新整理、恢復或大小改變）。
 /// </summary>
 [MessagePackObject]
 public sealed record VideoTileUpdate(
@@ -158,7 +159,8 @@ public sealed record VideoTileUpdate(
     [property: Key(1)] int FrameWidth,
     [property: Key(2)] int FrameHeight,
     [property: Key(3)] bool EndOfFrame,
-    [property: Key(4)] VideoTile[] Tiles) : IMessage
+    [property: Key(4)] VideoTile[] Tiles,
+    [property: Key(5)] bool IsKeyframe) : IMessage
 {
     public static MessageType Type => MessageType.VideoTileUpdate;
 }

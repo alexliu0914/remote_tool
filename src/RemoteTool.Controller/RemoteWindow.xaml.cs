@@ -27,6 +27,10 @@ public partial class RemoteWindow : Window
     private int _framesSinceTick;
     private long _bytesAtLastTick;
     private bool _closing;
+    private bool _fit = true;
+    private bool _refreshRequested;
+    private bool _pendingKeyframe;
+    private string _note = "";
 
     /// <summary>非 null 表示因連線中斷而關閉，內容為原因。</summary>
     public string? EndReason { get; private set; }
@@ -65,11 +69,12 @@ public partial class RemoteWindow : Window
     }
 
     /// <summary>背景執行緒呼叫：一張畫面已解到畫布。</summary>
-    internal void OnFrameCompleted(PixelRect dirty)
+    internal void OnFrameCompleted(PixelRect dirty, bool isKeyframe = false)
     {
         lock (_dirtyGate)
         {
             _pendingDirty = _pendingDirty.Union(dirty);
+            _pendingKeyframe |= isKeyframe;
             if (_renderScheduled) return;
             _renderScheduled = true;
         }
@@ -79,11 +84,20 @@ public partial class RemoteWindow : Window
     private void Render()
     {
         PixelRect dirty;
+        bool keyframe;
         lock (_dirtyGate)
         {
             dirty = _pendingDirty;
+            keyframe = _pendingKeyframe;
             _pendingDirty = default;
+            _pendingKeyframe = false;
             _renderScheduled = false;
+        }
+        if (keyframe && _refreshRequested)
+        {
+            _refreshRequested = false;
+            _note = $"畫面已重新整理（{DateTime.Now:HH:mm:ss}）";
+            UpdateStatus();
         }
 
         lock (_canvas.SyncRoot)
@@ -111,6 +125,8 @@ public partial class RemoteWindow : Window
         _framesSinceTick++;
     }
 
+    private string _stats = "等待畫面…";
+
     private void OnStatsTick(object? sender, EventArgs e)
     {
         long bytes = _session.VideoBytesReceived;
@@ -119,25 +135,33 @@ public partial class RemoteWindow : Window
 
         string size = _bitmap is null ? "—" : $"{_bitmap.PixelWidth}×{_bitmap.PixelHeight}";
         string rtt = _session.LastRoundTrip is { } t ? $"{t.TotalMilliseconds:0} ms" : "—";
-        StatusText.Text = $"{size}    {_framesSinceTick} FPS    {kbps:0} kbps    心跳 {rtt}    （A1 PoC：區塊差異 + Deflate，尚無鍵鼠）";
+        _stats = $"{size}    {_framesSinceTick} FPS    {kbps:0} kbps    心跳 {rtt}    （A1 PoC：只能看，尚無鍵鼠）";
         _framesSinceTick = 0;
+        UpdateStatus();
     }
+
+    private void UpdateStatus()
+        => StatusText.Text = _note.Length == 0 ? _stats : $"{_stats}    ｜ {_note}";
 
     private void ApplyFit()
     {
-        bool fit = FitCheck.IsChecked == true;
-        ScreenImage.Stretch = fit ? Stretch.Uniform : Stretch.None;
-        Scroller.HorizontalScrollBarVisibility = fit ? ScrollBarVisibility.Disabled : ScrollBarVisibility.Auto;
-        Scroller.VerticalScrollBarVisibility = fit ? ScrollBarVisibility.Disabled : ScrollBarVisibility.Auto;
+        ScreenImage.Stretch = _fit ? Stretch.Uniform : Stretch.None;
+        Scroller.HorizontalScrollBarVisibility = _fit ? ScrollBarVisibility.Disabled : ScrollBarVisibility.Auto;
+        Scroller.VerticalScrollBarVisibility = _fit ? ScrollBarVisibility.Disabled : ScrollBarVisibility.Auto;
+        FitButton.Content = _fit ? "顯示：符合視窗" : "顯示：原尺寸";
     }
 
-    private void OnFitChanged(object sender, RoutedEventArgs e)
+    private void OnFitToggle(object sender, RoutedEventArgs e)
     {
-        if (ScreenImage is not null) ApplyFit();
+        _fit = !_fit;
+        ApplyFit();
     }
 
     private async void OnRefresh(object sender, RoutedEventArgs e)
     {
+        _refreshRequested = true;
+        _note = "已要求重新整理…";
+        UpdateStatus();
         try
         {
             await _session.RequestKeyframeAsync(_canvas.LastFrameId);

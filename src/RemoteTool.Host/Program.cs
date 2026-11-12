@@ -45,7 +45,7 @@ static class HostProgram
                 MaxWidth = ParseIntOption(args, "--max-width", 1920, 320, 8192),
                 Log = Log,
             };
-            return await ServeAsync(ConsoleInput.ParsePort(args, ProtocolInfo.DefaultPort), video);
+            return await ServeAsync(ConsoleInput.ParsePort(args, ProtocolInfo.DefaultPort), video, args.Contains("--memlog"));
         }
         catch (ArgumentException ex)
         {
@@ -69,6 +69,9 @@ static class HostProgram
             畫面（A1 PoC）選項：
               --fps <1~30>              畫面更新上限，預設 10
               --max-width <寬>          畫面寬度上限，超過以整數倍縮小，預設 1920
+
+            診斷：
+              --memlog                  每 60 秒顯示記憶體用量（工作集、受控堆積、GC 次數）
             """);
         Console.WriteLine($"資料位置：{AppPaths.DataDirectory}");
     }
@@ -106,6 +109,16 @@ static class HostProgram
 
     private static void Log(string message) => Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] {message}");
 
+    /// <summary>V-12 診斷：工作集（含原生記憶體）與受控堆積分開顯示，用來判斷成長來自哪裡。</summary>
+    private static void LogMemory()
+    {
+        using var p = System.Diagnostics.Process.GetCurrentProcess();
+        var info = GC.GetGCMemoryInfo();
+        Log($"記憶體：工作集 {p.WorkingSet64 / 1048576} MB、私有 {p.PrivateMemorySize64 / 1048576} MB、" +
+            $"受控堆積 {GC.GetTotalMemory(false) / 1048576} MB（GC 後 {info.HeapSizeBytes / 1048576} MB）、" +
+            $"GC 0/1/2 = {GC.CollectionCount(0)}/{GC.CollectionCount(1)}/{GC.CollectionCount(2)}");
+    }
+
     private static int ParseIntOption(string[] args, string name, int defaultValue, int min, int max)
     {
         int i = Array.IndexOf(args, name);
@@ -122,7 +135,7 @@ static class HostProgram
         await VideoStreamer.RunAsync(capture, ctx.Stream, ctx.Incoming, options, ctx.Token);
     }
 
-    private static async Task<int> ServeAsync(int port, VideoStreamerOptions video)
+    private static async Task<int> ServeAsync(int port, VideoStreamerOptions video, bool memlog)
     {
         CredentialRecord? credentials;
         try
@@ -182,6 +195,8 @@ static class HostProgram
         Console.WriteLine();
         Console.WriteLine("按 Ctrl+C 結束。");
         Console.WriteLine();
+
+        using var memTimer = memlog ? new Timer(_ => LogMemory(), null, TimeSpan.Zero, TimeSpan.FromSeconds(60)) : null;
 
         var stop = new TaskCompletionSource();
         Console.CancelKeyPress += (_, e) =>

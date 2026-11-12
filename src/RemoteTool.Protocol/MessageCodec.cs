@@ -19,6 +19,10 @@ public static class MessageCodec
     public static byte[] Serialize<T>(T message) where T : IMessage
         => MessagePackSerializer.Serialize(message, Options);
 
+    /// <summary>序列化到呼叫端提供的緩衝區（避免配置新陣列）。</summary>
+    public static void Serialize<T>(System.Buffers.IBufferWriter<byte> writer, T message) where T : IMessage
+        => MessagePackSerializer.Serialize(writer, message, Options);
+
     public static T Decode<T>(Frame frame) where T : IMessage
     {
         if (frame.Type != T.Type)

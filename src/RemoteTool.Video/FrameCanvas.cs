@@ -21,6 +21,8 @@ public sealed class FrameCanvas
     public FrameBuffer Buffer => _buffer;
     public long LastFrameId { get; private set; }
     public int CompletedFrames { get; private set; }
+    /// <summary>最近完成的一張畫面是否為完整畫面（keyframe）。</summary>
+    public bool LastCompletedWasKeyframe { get; private set; }
 
     /// <summary>套用一個封包。回傳 true 表示一張畫面完成，<paramref name="dirty"/> 為該張的變動範圍。</summary>
     public bool Apply(VideoTileUpdate update, out PixelRect dirty)
@@ -49,6 +51,7 @@ public sealed class FrameCanvas
             dirty = _pendingDirty;
             _pendingDirty = default;
             CompletedFrames++;
+            LastCompletedWasKeyframe = update.IsKeyframe;
             return true;
         }
     }

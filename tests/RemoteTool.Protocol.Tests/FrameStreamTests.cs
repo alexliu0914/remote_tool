@@ -48,6 +48,38 @@ public class FrameStreamTests
     }
 
     [Fact]
+    public async Task ReuseReadBuffer_ReturnsCorrectFrames_OfDifferentSizes()
+    {
+        var ms = new MemoryStream();
+        var writer = new FrameStream(ms, Endpoint.Host) { Role = ChannelKind.Video };
+        await writer.WriteAsync(new VideoTileUpdate(1, 10, 10, true, [new VideoTile(0, 0, 1, 1, new byte[300_000])], true));
+        await writer.WriteAsync(new VideoTileUpdate(2, 10, 10, true, [new VideoTile(0, 0, 1, 1, new byte[5])], false));
+
+        var reader = new FrameStream(new MemoryStream(ms.ToArray()), Endpoint.Controller) { Role = ChannelKind.Video, ReuseReadBuffer = true };
+        var f1 = (await reader.ReadAsync())!.Value;
+        Assert.Equal(300_000, MessageCodec.Decode<VideoTileUpdate>(f1).Tiles[0].Data.Length);
+        var f2 = (await reader.ReadAsync())!.Value;
+        var d2 = MessageCodec.Decode<VideoTileUpdate>(f2);
+        Assert.Equal((2L, 5, false), (d2.FrameId, d2.Tiles[0].Data.Length, d2.IsKeyframe));
+    }
+
+    [Fact]
+    public async Task Writer_ReusesBuffer_AcrossManyMessages()
+    {
+        var ms = new MemoryStream();
+        var writer = new FrameStream(ms, Endpoint.Host) { Role = ChannelKind.Video };
+        for (int i = 0; i < 50; i++)
+            await writer.WriteAsync(new VideoTileUpdate(i, 10, 10, true, [new VideoTile(0, 0, 1, 1, new byte[(i % 5) * 50_000 + 1])], false));
+        var reader = new FrameStream(new MemoryStream(ms.ToArray()), Endpoint.Controller) { Role = ChannelKind.Video };
+        for (int i = 0; i < 50; i++)
+        {
+            var f = (await reader.ReadAsync())!.Value;
+            Assert.Equal((uint)(i + 1), f.Sequence);
+            Assert.Equal((i % 5) * 50_000 + 1, MessageCodec.Decode<VideoTileUpdate>(f).Tiles[0].Data.Length);
+        }
+    }
+
+    [Fact]
     public void NextRequestId_IsNonZeroAndIncreasing()
     {
         var s = new FrameStream(new MemoryStream(), Endpoint.Controller);

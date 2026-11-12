@@ -117,7 +117,7 @@ public partial class LoginWindow : Window
                 VideoFrameReceived = frame =>
                 {
                     if (canvas.Apply(MessageCodec.Decode<VideoTileUpdate>(frame), out var dirty))
-                        Volatile.Read(ref remote)?.OnFrameCompleted(dirty);
+                        Volatile.Read(ref remote)?.OnFrameCompleted(dirty, canvas.LastCompletedWasKeyframe);
                 },
             });
             DiagnosticLog.Write($"連線成功 {hostKey}");

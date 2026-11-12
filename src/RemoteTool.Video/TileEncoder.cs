@@ -41,19 +41,17 @@ public sealed class TileEncoder
             }
         }
 
-        frame.CopyTo(_previous);
+        if (!ReferenceEquals(frame, _previous)) frame.CopyTo(_previous);
         _hasPrevious = true;
 
-        return tiles.Count == 0 ? Array.Empty<VideoTileUpdate>() : Pack(frame.Width, frame.Height, tiles);
+        return tiles.Count == 0 ? Array.Empty<VideoTileUpdate>() : Pack(frame.Width, frame.Height, tiles, full);
     }
 
     /// <summary>以上一張畫面重送完整畫面（收到 KeyframeRequest 但沒有新畫面時用）。</summary>
     public IReadOnlyList<VideoTileUpdate> EncodePreviousFull()
     {
         if (!_hasPrevious) return Array.Empty<VideoTileUpdate>();
-        var copy = new FrameBuffer();
-        _previous.CopyTo(copy);
-        return Encode(copy, forceFull: true);
+        return Encode(_previous, forceFull: true); // 直接用上一張，不另外複製整張畫面
     }
 
     private bool TileChanged(FrameBuffer frame, int tx, int ty, int tw, int th)
@@ -80,7 +78,7 @@ public sealed class TileEncoder
         return new VideoTile(tx, ty, tw, th, ms.ToArray());
     }
 
-    private List<VideoTileUpdate> Pack(int width, int height, List<VideoTile> tiles)
+    private List<VideoTileUpdate> Pack(int width, int height, List<VideoTile> tiles, bool keyframe)
     {
         long id = ++_frameId;
         var packets = new List<VideoTileUpdate>();
@@ -92,14 +90,14 @@ public sealed class TileEncoder
             int tileSize = tile.Data.Length + PerTileOverhead;
             if (current.Count > 0 && size + tileSize > MaxPacketBytes)
             {
-                packets.Add(new VideoTileUpdate(id, width, height, false, current.ToArray()));
+                packets.Add(new VideoTileUpdate(id, width, height, false, current.ToArray(), keyframe));
                 current.Clear();
                 size = 0;
             }
             current.Add(tile);
             size += tileSize;
         }
-        packets.Add(new VideoTileUpdate(id, width, height, true, current.ToArray()));
+        packets.Add(new VideoTileUpdate(id, width, height, true, current.ToArray(), keyframe));
         return packets;
     }
 }

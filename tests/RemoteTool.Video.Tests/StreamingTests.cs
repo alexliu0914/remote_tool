@@ -135,6 +135,7 @@ public class StreamingTests
         await session.RequestKeyframeAsync(canvas.LastFrameId);
         await WaitFor(() => canvas.CompletedFrames == 2);
         lock (dirties) Assert.Equal(new PixelRect(0, 0, 640, 480), dirties[1]);
+        Assert.True(canvas.LastCompletedWasKeyframe);
     }
 
     [Fact]

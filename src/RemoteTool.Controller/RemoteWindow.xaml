@@ -5,8 +5,8 @@
         WindowStartupLocation="CenterScreen">
     <DockPanel>
         <ToolBar DockPanel.Dock="Top">
-            <CheckBox x:Name="FitCheck" Content="符合視窗大小" IsChecked="True" Margin="4,0"
-                      Checked="OnFitChanged" Unchecked="OnFitChanged" />
+            <Button x:Name="FitButton" Content="顯示：符合視窗" Click="OnFitToggle" MinWidth="120"
+                    ToolTip="切換「縮放到視窗內」與「原尺寸（可捲動）」" />
             <Separator />
             <Button Content="重新整理畫面" Click="OnRefresh" ToolTip="要求被控端重送完整畫面" />
             <Separator />

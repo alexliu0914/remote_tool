@@ -68,6 +68,21 @@ public class TileCodecTests
     }
 
     [Fact]
+    public void KeyframeFlag_MarksFullFramesOnly()
+    {
+        var enc = new TileEncoder();
+        Assert.All(enc.Encode(TestFrames.Gradient(200, 200), false), p => Assert.True(p.IsKeyframe));   // 第一張
+        var b = TestFrames.Gradient(200, 200); TestFrames.Fill(b, 0, 0, 4, 4, 9);
+        Assert.All(enc.Encode(b, false), p => Assert.False(p.IsKeyframe));                              // 差異
+        Assert.All(enc.Encode(b, true), p => Assert.True(p.IsKeyframe));                                // 強制
+        Assert.All(enc.EncodePreviousFull(), p => Assert.True(p.IsKeyframe));                           // 重送上一張
+        var canvas = new FrameCanvas();
+        foreach (var p in enc.EncodePreviousFull()) canvas.Apply(p, out _);
+        Assert.True(canvas.LastCompletedWasKeyframe);
+        Assert.Equal(b.Pixels, canvas.Buffer.Pixels);
+    }
+
+    [Fact]
     public void UnchangedFrame_ProducesNothing_UnlessForced()
     {
         var enc = new TileEncoder();
@@ -125,17 +140,17 @@ public class TileCodecTests
     public void Canvas_RejectsTileOutsideFrame()
     {
         var tile = new VideoTile(60, 0, 8, 8, Deflate(new byte[8 * 8 * 4]));
-        Assert.Throws<InvalidDataException>(() => new FrameCanvas().Apply(new VideoTileUpdate(1, 64, 64, true, [tile]), out _));
+        Assert.Throws<InvalidDataException>(() => new FrameCanvas().Apply(new VideoTileUpdate(1, 64, 64, true, [tile], false), out _));
     }
 
     [Fact]
     public void Canvas_RejectsNegativeOrHugeDimensions()
     {
         var canvas = new FrameCanvas();
-        Assert.Throws<InvalidDataException>(() => canvas.Apply(new VideoTileUpdate(1, 0, 10, true, []), out _));
-        Assert.Throws<InvalidDataException>(() => canvas.Apply(new VideoTileUpdate(1, 100_000, 10, true, []), out _));
+        Assert.Throws<InvalidDataException>(() => canvas.Apply(new VideoTileUpdate(1, 0, 10, true, [], false), out _));
+        Assert.Throws<InvalidDataException>(() => canvas.Apply(new VideoTileUpdate(1, 100_000, 10, true, [], false), out _));
         var neg = new VideoTile(-1, 0, 8, 8, Deflate(new byte[256]));
-        Assert.Throws<InvalidDataException>(() => canvas.Apply(new VideoTileUpdate(1, 64, 64, true, [neg]), out _));
+        Assert.Throws<InvalidDataException>(() => canvas.Apply(new VideoTileUpdate(1, 64, 64, true, [neg], false), out _));
     }
 
     [Fact]
@@ -143,15 +158,15 @@ public class TileCodecTests
     {
         // 宣稱 8×8，實際解壓出 1 MB
         var bomb = new VideoTile(0, 0, 8, 8, Deflate(new byte[1024 * 1024]));
-        Assert.Throws<InvalidDataException>(() => new FrameCanvas().Apply(new VideoTileUpdate(1, 64, 64, true, [bomb]), out _));
+        Assert.Throws<InvalidDataException>(() => new FrameCanvas().Apply(new VideoTileUpdate(1, 64, 64, true, [bomb], false), out _));
     }
 
     [Fact]
     public void Canvas_RejectsShortOrGarbageData()
     {
         var shortTile = new VideoTile(0, 0, 8, 8, Deflate(new byte[10]));
-        Assert.Throws<InvalidDataException>(() => new FrameCanvas().Apply(new VideoTileUpdate(1, 64, 64, true, [shortTile]), out _));
+        Assert.Throws<InvalidDataException>(() => new FrameCanvas().Apply(new VideoTileUpdate(1, 64, 64, true, [shortTile], false), out _));
         var garbage = new VideoTile(0, 0, 8, 8, new byte[] { 0xFF, 0xFF, 0xFF, 0xFF });
-        Assert.Throws<InvalidDataException>(() => new FrameCanvas().Apply(new VideoTileUpdate(1, 64, 64, true, [garbage]), out _));
+        Assert.Throws<InvalidDataException>(() => new FrameCanvas().Apply(new VideoTileUpdate(1, 64, 64, true, [garbage], false), out _));
     }
 }

@@ -28,7 +28,10 @@ public sealed class ControllerConnectOptions
     /// <summary>多久沒收到被控端的心跳回覆就判定斷線（PLAN §7：6 秒）。</summary>
     public TimeSpan HeartbeatTimeout { get; init; } = TimeSpan.FromSeconds(ProtocolInfo.HeartbeatTimeoutSeconds);
 
-    /// <summary>收到 Video 封包時呼叫（在背景執行緒）。拋出例外會結束工作階段。</summary>
+    /// <summary>
+    /// 收到 Video 封包時呼叫（在背景執行緒）。拋出例外會結束工作階段。
+    /// <b>Payload 只在回呼執行期間有效</b>（讀取緩衝區會重複使用），需要保留請自行複製。
+    /// </summary>
     public Action<Frame>? VideoFrameReceived { get; init; }
 }
 
@@ -143,7 +146,9 @@ public static class ControllerClient
         ControllerConnectOptions options, string hostKey, string fingerprint,
         ChannelKind role, byte[] token, CancellationToken ct)
     {
-        var (stream, _) = await OpenTlsAsync(options.Host, options.Port, fingerprint, hostKey, ct).ConfigureAwait(false);
+        // Video 封包大且多，收到後在回呼中同步處理完，因此重複使用讀取緩衝區（V-12）。
+        var (stream, _) = await OpenTlsAsync(options.Host, options.Port, fingerprint, hostKey, ct,
+            reuseReadBuffer: role == ChannelKind.Video).ConfigureAwait(false);
         try
         {
             await ExchangeHelloAsync(stream, role, ct).ConfigureAwait(false);
@@ -181,7 +186,7 @@ public static class ControllerClient
     /// 建立 TCP + TLS 1.3。<paramref name="expectedFingerprint"/> 非 null 時，指紋不同即在握手階段中止。
     /// </summary>
     private static async Task<(FrameStream Stream, string Fingerprint)> OpenTlsAsync(
-        string host, int port, string? expectedFingerprint, string hostKey, CancellationToken ct)
+        string host, int port, string? expectedFingerprint, string hostKey, CancellationToken ct, bool reuseReadBuffer = false)
     {
         var tcp = new TcpClient { NoDelay = true };
         SslStream? ssl = null;
@@ -206,7 +211,7 @@ public static class ControllerClient
                 },
             }, ct).ConfigureAwait(false);
 
-            return (new FrameStream(ssl, Endpoint.Controller), observed!);
+            return (new FrameStream(ssl, Endpoint.Controller) { ReuseReadBuffer = reuseReadBuffer }, observed!);
         }
         catch (AuthenticationException) when (expectedFingerprint is not null && observed is not null && observed != expectedFingerprint)
         {

@@ -97,6 +97,7 @@ public static class VideoStreamer
                 if (source is null && !wantKeyframe) continue; // 沒變化，DXGI 的等待本身就是節流
 
                 List<object>? packets = null;
+                byte[]? pooled = null; // 送完後歸還 ArrayPool
 
                 // ---- H.264 ----
                 if (h264Allowed)
@@ -122,8 +123,11 @@ public static class VideoStreamer
                             bool force = Interlocked.Exchange(ref keyframeRequested, 0) == 1 || wantKeyframe;
                             var encoded = encoder.Encode(last, force);
                             if (encoded is not null)
+                            {
+                                pooled = encoded.Pooled ? encoded.Buffer : null;
                                 packets = VideoFrameAssembler.Split(++frameId, last.Width, last.Height, encoded, "h264")
                                     .Cast<object>().ToList();
+                            }
                         }
                         catch (Exception ex) when (ex is not OperationCanceledException)
                         {
@@ -152,13 +156,21 @@ public static class VideoStreamer
                     packets = tileUpdates.Cast<object>().ToList();
                 }
 
-                if (packets is not null)
+                try
                 {
-                    foreach (var packet in packets)
+                    if (packets is not null)
                     {
-                        if (packet is VideoFrame vf) await stream.WriteAsync(vf, 0, ct).ConfigureAwait(false);
-                        else if (packet is VideoTileUpdate vt) await stream.WriteAsync(vt, 0, ct).ConfigureAwait(false);
+                        foreach (var packet in packets)
+                        {
+                            // WriteAsync 在送出前已把內容序列化到連線自己的緩衝區，之後即可歸還
+                            if (packet is VideoFrame vf) await stream.WriteAsync(vf, 0, ct).ConfigureAwait(false);
+                            else if (packet is VideoTileUpdate vt) await stream.WriteAsync(vt, 0, ct).ConfigureAwait(false);
+                        }
                     }
+                }
+                finally
+                {
+                    if (pooled is not null) System.Buffers.ArrayPool<byte>.Shared.Return(pooled);
                 }
 
                 var remaining = interval - TimeSpan.FromMilliseconds(Environment.TickCount64 - started);

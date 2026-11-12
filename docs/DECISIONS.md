@@ -61,4 +61,5 @@
 | D-050 | 2026-11-12 | 影像格式協商：控制端在 Video 連線 Hello 宣告 `video.h264`（解碼器可用時）與 `video.tiles`；被控端在控制端支援且編碼器可用時送 H.264（VideoFrame，分塊 ≤ 512 KB、每張 ≤ 64 塊、≤ 16 MiB），否則送區塊差異。編碼器在串流中故障時，該連線改用區塊差異並送完整畫面；控制端兩種格式都能處理、寫入同一畫布。H.264 預設 30 FPS、6000 kbps、CBR、低延遲、無 B 幀、GOP 2 秒；`--codec`、`--bitrate`、`--fps` 可調 | DEV | 待確認 |
 | D-051 | 2026-11-12 | PLAN §5.1「畫面落後時清空待送佇列並要求 IDR」：因採零佇列（一張送完才擷取下一張）且每張編碼結果都完整送出，參考鏈不會因丟幀損壞，此情境不會發生；落後時以降低擷取頻率處理。解碼失敗時控制端每秒最多要求一次關鍵幀（PLAN_GAPS G-10） | DEV | 待確認 |
 | D-052 | 2026-11-12 | 硬體 H.264 編碼（A2a-2）：列舉硬體非同步 MFT，解鎖（MF_TRANSFORM_ASYNC_UNLOCK）後以專用執行緒接收 NeedInput / HaveOutput 事件，輸入為系統記憶體 NV12（暫不使用 D3D11 裝置管理員）。`ResilientH264Encoder`：Auto 模式硬體優先，硬體在建立或串流中失敗時改用軟體（不退回區塊差異）；Host 啟動時實際試編一張畫面探測。`--codec auto|h264|h264-hw|h264-sw|tiles` | DEV（依 PLAN §4） | 待實機確認 |
+| D-053 | 2026-11-12 | 編碼輸出記憶體（HW-06）：`EncodedFrame` 改為借自 ArrayPool 的緩衝區 + 長度，`VideoStreamer` 送出後歸還；`VideoFrame.Data` 改為 ReadOnlyMemory 以切片分塊不複製（MessagePack 線路格式仍為 bin，Protocol V1 不變）；接收端組裝時複製。`--memlog` 區分 GC 已提交與原生記憶體 | DEV | 待實機確認（HW-06） |
 

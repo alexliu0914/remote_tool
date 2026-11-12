@@ -249,8 +249,11 @@ static class HostProgram
     {
         using var p = System.Diagnostics.Process.GetCurrentProcess();
         var info = GC.GetGCMemoryInfo();
-        Log($"記憶體：工作集 {p.WorkingSet64 / 1048576} MB、私有 {p.PrivateMemorySize64 / 1048576} MB、" +
-            $"受控堆積 {GC.GetTotalMemory(false) / 1048576} MB（GC 後 {info.HeapSizeBytes / 1048576} MB）、" +
+        long privateMb = p.PrivateMemorySize64 / 1048576;
+        long committedMb = info.TotalCommittedBytes / 1048576;
+        // 原生（估計）＝私有記憶體 − GC 已向系統取得的記憶體：用來判斷成長來自 .NET 堆積還是原生（DXGI、Media Foundation、驅動程式）
+        Log($"記憶體：工作集 {p.WorkingSet64 / 1048576} MB、私有 {privateMb} MB｜GC 已提交 {committedMb} MB、" +
+            $"受控堆積 {GC.GetTotalMemory(false) / 1048576} MB（GC 後 {info.HeapSizeBytes / 1048576} MB）｜原生（估計）{privateMb - committedMb} MB｜" +
             $"GC 0/1/2 = {GC.CollectionCount(0)}/{GC.CollectionCount(1)}/{GC.CollectionCount(2)}");
     }
 

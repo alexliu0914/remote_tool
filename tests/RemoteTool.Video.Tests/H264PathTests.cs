@@ -239,8 +239,31 @@ public class ColorAndAssemblerTests
         Assert.False(a.Add(parts[0], out _, out _));
         Assert.False(a.Add(parts[1], out _, out _));
         Assert.True(a.Add(parts[2], out var first, out var data));
-        Assert.Equal(frame.Data, data);
+        Assert.Equal(frame.Data.ToArray(), data);
         Assert.True(first!.IsKeyframe);
+    }
+
+    [Fact]
+    public void Split_SlicesWithoutCopying_AndRespectsLength()
+    {
+        var buffer = new byte[2_000_000];
+        var frame = new EncodedFrame(buffer, 1_100_000, false, Pooled: true); // 借來的緩衝區比實際資料長
+        var parts = VideoFrameAssembler.Split(1, 64, 64, frame, "h264");
+        Assert.Equal(3, parts.Count);
+        Assert.Equal(1_100_000, parts.Sum(p => p.Data.Length));
+        Assert.True(System.Runtime.InteropServices.MemoryMarshal.TryGetArray(parts[1].Data, out var seg));
+        Assert.Same(buffer, seg.Array); // 同一個陣列，未複製
+    }
+
+    [Fact]
+    public void Assembler_CopiesChunkData_SoReusedReadBuffersAreSafe()
+    {
+        var shared = new byte[100];
+        var a = new VideoFrameAssembler();
+        a.Add(new VideoFrame(1, 64, 64, true, 0, 2, shared.AsMemory(0, 50), "h264"), out _, out _);
+        shared.AsSpan().Fill(9); // 模擬讀取緩衝區被下一個封包覆寫
+        Assert.True(a.Add(new VideoFrame(1, 64, 64, true, 1, 2, new byte[50], "h264"), out _, out var data));
+        Assert.All(data!.Take(50), b => Assert.Equal(0, b));
     }
 
     [Fact]

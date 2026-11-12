@@ -60,11 +60,13 @@
 | T-027 | 2026-11-12 | 本筆提交 | 雲端 Linux（.NET 10） | Claude | A2a：BGRA↔NV12（往返誤差、黑白邊界值、stride 與補齊列、奇數尺寸拒絕）、VideoFrame 分塊組裝（順序、混雜、塊數、尺寸、16 MiB 上限）、H.264 傳輸路徑（假編解碼器經 TLS：分塊後逐像素一致、未宣告能力時改送區塊差異、編碼器故障改用區塊差異並送完整畫面、沒有新畫面時重新編碼為關鍵幀、奇數尺寸裁切）；Media Foundation 編解碼器（RemoteTool.Media）交叉建置與 win-x64 發佈。全部回歸 | PASS | 162/162（Protocol 52、Connection 73、Video 37），連續 2 次。**Media Foundation 編碼與解碼只能在 Windows 執行，未經實機驗證**（TESTING.md 4.5 H-01～H-11） |
 | T-028 | 2026-11-12 | a17c3b8 之建置 | 使用者 Windows 11 實機，單機 | 使用者 | A2a H.264：TESTING.md 4.5 H-01～H-11 | PASS | 全部通過。被控端使用「H264 Encoder MFT」（軟體）1920×1080，控制端使用軟體 H.264 解碼。H-05：Host 與 Controller CPU 皆約 5% 以下。H-10 `--memlog` 約 12 分鐘：連線後工作集 198 → 205 → 206 MB、私有 225 → 231 → 233 MB、受控堆積（GC 後）29 → 32 → 33 MB、gen2 GC 共 2 次——**持平**（較 A1 高約 80 MB，為編碼器緩衝區，未持續增加） |
 | T-029 | 2026-11-12 | 本筆提交 | 雲端 Linux（.NET 10） | Claude | A2a-2 硬體 H.264 編碼器（非同步 MFT）與硬體→軟體自動切換：交叉建置、`--codec` 參數驗證、全部回歸 | PASS | 162/162。**硬體編碼只能在 Windows 實機驗證**（TESTING.md 4.6 HW-01～HW-06） |
+| T-030 | 2026-11-12 | 7d8830c 之建置 | 使用者 Windows 11 實機，單機（Intel 內顯） | 使用者 | A2a-2：TESTING.md 4.6 HW-01～HW-06 | HW-01～HW-05 **PASS**；HW-06 **FAIL**（依數據判定） | 使用「Intel® Quick Sync Video H.264 Encoder MFT」硬體編碼，畫面與各情境正常。HW-04：Host CPU 硬體 5% 以下、軟體（`--codec h264-sw`）最高 11%。HW-06：使用者回報通過，但 10 分鐘數據**持續上升**——工作集 205 → 263 → 297 MB、私有 167 → 224 → 258 MB；受控堆積（GC 後）40 → 97 → 34 → 73 MB 呈鋸齒（GC 可回收），私有記憶體未隨之下降；同條件軟體編碼（T-028）持平。依「記憶體持平」標準判定為 FAIL |
+| T-031 | 2026-11-12 | 本筆提交 | 雲端 Linux（.NET 10） | Claude | HW-06 對策：編碼輸出改用 ArrayPool（每張一個借用緩衝區、送出後歸還），VideoFrame 分塊改為切片不複製（Data 改為 ReadOnlyMemory，線路格式不變），接收端組裝時複製以免讀取緩衝區被覆寫；硬體編碼器輸出改保留 sample 至組裝時才讀取；`--memlog` 新增「GC 已提交」與「原生（估計）＝私有 − GC 已提交」。全部回歸 | PASS | 164/164（Video 39）。新增測試：分塊零複製且遵守長度、組裝時複製資料。**是否解決須實機以新版 `--memlog` 重測 HW-06**；若「原生（估計）」仍持續增加，代表硬體編碼路徑有原生記憶體洩漏，需進一步處理 |
 
 ## 4. 尚待人工執行
 
 | 項目 | 對應 | 需要 | 步驟 |
 | --- | --- | --- | --- |
 | V-11 縮小 | G0-02 | 寬度大於 1920 的螢幕 | [TESTING.md](TESTING.md) 4.4 V-11 |
-| A2a-2 硬體編碼 | G0-02 | 一台有 GPU 的 Windows 11 | [TESTING.md](TESTING.md) 4.6 HW-01～HW-06 |
+| A2a-2 HW-06 重測 | G0-02 | 同 T-030 的電腦 | [TESTING.md](TESTING.md) 4.6 HW-06（新版 `--memlog`，20 分鐘） |
 | 雙機驗證 | G0-01、G0-02 | 兩台實體 Windows 11、同一區域網路 | [TESTING.md](TESTING.md) 第五節 5.6 |

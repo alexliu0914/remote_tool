@@ -120,6 +120,40 @@ internal static class MediaFoundationRuntime
         return mft;
     }
 
+    /// <summary>
+    /// 把多個 sample 的內容依序複製到一個借自 ArrayPool 的緩衝區（可在前面先放 <paramref name="prefix"/>），
+    /// 回傳 (緩衝區, 長度)。用完由呼叫端歸還（透過 <see cref="RemoteTool.Video.EncodedFrame.Pooled"/>）。
+    /// </summary>
+    public static (byte[] Buffer, int Length) ReadSamplesPooled(IReadOnlyList<IMFSample> samples, ReadOnlySpan<byte> prefix)
+    {
+        var buffers = new List<IMFMediaBuffer>(samples.Count);
+        try
+        {
+            int total = prefix.Length;
+            foreach (var s in samples)
+            {
+                var b = s.ConvertToContiguousBuffer();
+                buffers.Add(b);
+                total += b.CurrentLength;
+            }
+            var result = System.Buffers.ArrayPool<byte>.Shared.Rent(Math.Max(total, 1));
+            prefix.CopyTo(result);
+            int offset = prefix.Length;
+            foreach (var b in buffers)
+            {
+                b.Lock(out IntPtr ptr, out _, out int length);
+                try { Marshal.Copy(ptr, result, offset, length); }
+                finally { b.Unlock(); }
+                offset += length;
+            }
+            return (result, total);
+        }
+        finally
+        {
+            foreach (var b in buffers) b.Dispose();
+        }
+    }
+
     /// <summary>把 sample 的內容複製成位元組陣列。</summary>
     public static byte[] ReadSample(IMFSample sample)
     {

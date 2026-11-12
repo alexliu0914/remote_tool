@@ -2,8 +2,15 @@ using RemoteTool.Protocol;
 
 namespace RemoteTool.Video;
 
-/// <summary>一張編碼後的畫面。</summary>
-public sealed record EncodedFrame(byte[] Data, bool IsKeyframe);
+/// <summary>
+/// 一張編碼後的畫面：<see cref="Buffer"/> 的前 <see cref="Length"/> 位元組。
+/// <see cref="Pooled"/> 為 true 表示緩衝區借自 ArrayPool，送出後由 <see cref="VideoStreamer"/> 歸還（V-12 / HW-06：避免每張配置大型陣列）。
+/// </summary>
+public sealed record EncodedFrame(byte[] Buffer, int Length, bool IsKeyframe, bool Pooled)
+{
+    public EncodedFrame(byte[] data, bool isKeyframe) : this(data, data.Length, isKeyframe, false) { }
+    public ReadOnlyMemory<byte> Data => Buffer.AsMemory(0, Length);
+}
 
 /// <summary>
 /// 影像編碼器（A2：Media Foundation H.264，Windows 實作在 RemoteTool.Media）。
@@ -42,7 +49,6 @@ public sealed class VideoFrameAssembler
     {
         first = null;
         data = null;
-        if (chunk.Data is null) throw new InvalidDataException("VideoFrame 缺少資料");
         if (chunk.ChunkCount < 1 || chunk.ChunkCount > ProtocolInfo.MaxVideoChunks
             || chunk.ChunkIndex < 0 || chunk.ChunkIndex >= chunk.ChunkCount)
             throw new InvalidDataException($"VideoFrame 分塊編號不合法（{chunk.ChunkIndex}/{chunk.ChunkCount}）");
@@ -71,7 +77,7 @@ public sealed class VideoFrameAssembler
             _first = null;
             throw new InvalidDataException("VideoFrame 超過大小上限");
         }
-        _chunks.Add(chunk.Data);
+        _chunks.Add(chunk.Data.ToArray()); // Data 可能指向重複使用的讀取緩衝區，必須複製
 
         if (_chunks.Count < chunk.ChunkCount) return false;
 
@@ -82,18 +88,17 @@ public sealed class VideoFrameAssembler
         return true;
     }
 
-    /// <summary>把一張編碼畫面切成 VideoFrame 封包。</summary>
+    /// <summary>把一張編碼畫面切成 VideoFrame 封包（切片，不複製資料）。</summary>
     public static List<VideoFrame> Split(long frameId, int width, int height, EncodedFrame frame, string codec)
     {
         int max = ProtocolInfo.MaxVideoChunkBytes;
-        int count = Math.Max(1, (frame.Data.Length + max - 1) / max);
+        int count = Math.Max(1, (frame.Length + max - 1) / max);
         if (count > ProtocolInfo.MaxVideoChunks) throw new InvalidOperationException("編碼畫面過大");
         var list = new List<VideoFrame>(count);
         for (int i = 0; i < count; i++)
         {
-            int start = i * max, len = Math.Min(max, frame.Data.Length - start);
-            list.Add(new VideoFrame(frameId, width, height, frame.IsKeyframe, i, count,
-                frame.Data.AsSpan(start, Math.Max(0, len)).ToArray(), codec));
+            int start = i * max, len = Math.Max(0, Math.Min(max, frame.Length - start));
+            list.Add(new VideoFrame(frameId, width, height, frame.IsKeyframe, i, count, frame.Data.Slice(start, len), codec));
         }
         return list;
     }

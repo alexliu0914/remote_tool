@@ -139,42 +139,40 @@ public sealed class MfH264Encoder : IVideoEncoder
             _mft.ProcessInput(0, sample, 0);
         }
 
-        var outputs = new List<byte[]>();
+        var outputs = new List<IMFSample>();
         bool keyframe = false;
-        while (true)
+        try
         {
-            using IMFSample? provided = _providesSamples ? null : CreateEmptySample(_outputSize);
-            Result hr = ProcessOutput(_mft, provided, out IMFSample? produced);
-
-            if (hr == ResultCode.TransformNeedMoreInput) break;
-            if (hr == ResultCode.TransformStreamChange)
+            while (true)
             {
-                using var t = _mft.GetOutputAvailableType(0, 0);
-                _mft.SetOutputType(0, t, 0);
-                _sequenceHeader = null;
-                continue;
-            }
-            hr.CheckError();
+                IMFSample? provided = _providesSamples ? null : CreateEmptySample(_outputSize);
+                Result hr = ProcessOutput(_mft, provided, out IMFSample? produced);
 
-            using (produced)
-            {
+                if (hr == ResultCode.TransformNeedMoreInput) { provided?.Dispose(); break; }
+                if (hr == ResultCode.TransformStreamChange)
+                {
+                    provided?.Dispose();
+                    using var t = _mft.GetOutputAvailableType(0, 0);
+                    _mft.SetOutputType(0, t, 0);
+                    _sequenceHeader = null;
+                    continue;
+                }
+                if (hr.Failure) { provided?.Dispose(); produced?.Dispose(); hr.CheckError(); }
+
                 var sample = produced ?? provided!;
-                outputs.Add(ReadSample(sample));
+                if (produced is not null) provided?.Dispose();
+                outputs.Add(sample);
                 try { keyframe |= sample.GetUInt32(SampleAttributeKeys.CleanPoint) != 0; }
                 catch (SharpGenException) { /* 沒有標記 */ }
             }
-        }
 
-        if (outputs.Count == 0) return null;
-        byte[] data = outputs.Count == 1 ? outputs[0] : outputs.SelectMany(o => o).ToArray();
-        if (!keyframe) keyframe = H264.ContainsIdr(data);
-        if (keyframe && !H264.ContainsSps(data))
-        {
-            // 關鍵幀前沒有 SPS / PPS 時補上序列標頭，讓解碼端能從這一幀開始
-            _sequenceHeader ??= TryGetSequenceHeader();
-            if (_sequenceHeader is { Length: > 0 }) data = [.. _sequenceHeader, .. data];
+            if (outputs.Count == 0) return null;
+            return EncodedOutput.Build(outputs, keyframe, ref _sequenceHeader, TryGetSequenceHeader);
         }
-        return new EncodedFrame(data, keyframe);
+        finally
+        {
+            foreach (var o in outputs) o.Dispose();
+        }
     }
 
     private byte[]? TryGetSequenceHeader()
@@ -208,19 +206,47 @@ public sealed class MfH264Encoder : IVideoEncoder
 public static class H264
 {
     /// <summary>列出所有 NAL 單元類型（nal_unit_type，低 5 位元）。</summary>
-    public static IEnumerable<int> NalTypes(byte[] data)
+    public static List<int> NalTypes(ReadOnlySpan<byte> data)
     {
+        var types = new List<int>();
         for (int i = 0; i + 3 < data.Length; i++)
         {
             if (data[i] == 0 && data[i + 1] == 0 && (data[i + 2] == 1 || (data[i + 2] == 0 && i + 4 < data.Length && data[i + 3] == 1)))
             {
                 int start = data[i + 2] == 1 ? i + 3 : i + 4;
-                if (start < data.Length) yield return data[start] & 0x1F;
+                if (start < data.Length) types.Add(data[start] & 0x1F);
                 i = start;
             }
         }
+        return types;
     }
 
-    public static bool ContainsIdr(byte[] data) => NalTypes(data).Contains(5);
-    public static bool ContainsSps(byte[] data) => NalTypes(data).Contains(7);
+    public static bool ContainsIdr(ReadOnlySpan<byte> data) => NalTypes(data).Contains(5);
+    public static bool ContainsSps(ReadOnlySpan<byte> data) => NalTypes(data).Contains(7);
+}
+
+/// <summary>把編碼器輸出的 sample 組成一張 <see cref="EncodedFrame"/>（借自 ArrayPool，必要時在關鍵幀前補 SPS/PPS）。</summary>
+internal static class EncodedOutput
+{
+    public static EncodedFrame Build(IReadOnlyList<IMFSample> samples, bool keyframe, ref byte[]? sequenceHeader, Func<byte[]?> getSequenceHeader)
+    {
+        var (buffer, length) = MediaFoundationRuntime.ReadSamplesPooled(samples, ReadOnlySpan<byte>.Empty);
+        var span = buffer.AsSpan(0, length);
+        if (!keyframe) keyframe = H264.ContainsIdr(span);
+        if (keyframe && !H264.ContainsSps(span))
+        {
+            // 關鍵幀前沒有 SPS / PPS 時補上序列標頭，讓解碼端能從這一幀開始
+            sequenceHeader ??= getSequenceHeader();
+            if (sequenceHeader is { Length: > 0 } header)
+            {
+                var pool = System.Buffers.ArrayPool<byte>.Shared;
+                var combined = pool.Rent(header.Length + length);
+                header.CopyTo(combined, 0);
+                span.CopyTo(combined.AsSpan(header.Length));
+                pool.Return(buffer);
+                return new EncodedFrame(combined, header.Length + length, true, Pooled: true);
+            }
+        }
+        return new EncodedFrame(buffer, length, keyframe, Pooled: true);
+    }
 }

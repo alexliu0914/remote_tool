@@ -142,6 +142,8 @@ public sealed record KeyframeRequest(
 /// <summary>
 /// H.264 影像（A2，PLAN §5.1）：一張編碼後的畫面（Annex B 位元串流）。大畫面分塊傳送：
 /// 同一張畫面的各塊 <see cref="FrameId"/> 相同，<see cref="ChunkIndex"/> 由 0 遞增到 <see cref="ChunkCount"/> − 1。
+/// <see cref="Data"/> 以 ReadOnlyMemory 表示，送出端可直接切片不複製；線路格式仍為 MessagePack bin。
+/// 接收端解出的 Data 可能指向重複使用的讀取緩衝區，保留前須複製。
 /// </summary>
 [MessagePackObject]
 public sealed record VideoFrame(
@@ -151,7 +153,7 @@ public sealed record VideoFrame(
     [property: Key(3)] bool IsKeyframe,
     [property: Key(4)] int ChunkIndex,
     [property: Key(5)] int ChunkCount,
-    [property: Key(6)] byte[] Data,
+    [property: Key(6)] ReadOnlyMemory<byte> Data,
     [property: Key(7)] string Codec) : IMessage
 {
     public static MessageType Type => MessageType.VideoFrame;

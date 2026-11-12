@@ -18,7 +18,7 @@ public sealed class MfH264HardwareEncoder : IVideoEncoder
     private readonly object _mftLock = new();
     private readonly SemaphoreSlim _needInput = new(0, int.MaxValue);
     private readonly ManualResetEventSlim _haveOutput = new(false);
-    private readonly ConcurrentQueue<(byte[] Data, bool Keyframe)> _outputs = new();
+    private readonly ConcurrentQueue<(IMFSample Sample, bool Keyframe)> _outputs = new();
     private readonly Thread _pump;
     private readonly Action<string>? _log;
     private readonly byte[] _nv12;
@@ -123,24 +123,29 @@ public sealed class MfH264HardwareEncoder : IVideoEncoder
     {
         lock (_mftLock)
         {
-            using IMFSample? provided = _providesSamples ? null : CreateEmptySample(_outputSize);
+            IMFSample? provided = _providesSamples ? null : CreateEmptySample(_outputSize);
             Result hr = ProcessOutput(_mft, provided, out IMFSample? produced);
-            if (hr == ResultCode.TransformStreamChange)
+            if (hr == ResultCode.TransformStreamChange || hr == ResultCode.TransformNeedMoreInput || hr.Failure)
             {
-                using var t = _mft.GetOutputAvailableType(0, 0);
-                _mft.SetOutputType(0, t, 0);
-                _sequenceHeader = null;
+                provided?.Dispose();
+                produced?.Dispose();
+                if (hr == ResultCode.TransformStreamChange)
+                {
+                    using var t = _mft.GetOutputAvailableType(0, 0);
+                    _mft.SetOutputType(0, t, 0);
+                    _sequenceHeader = null;
+                }
+                else if (hr.Failure && hr != ResultCode.TransformNeedMoreInput)
+                {
+                    hr.CheckError();
+                }
                 return;
             }
-            if (hr == ResultCode.TransformNeedMoreInput) return;
-            hr.CheckError();
-            using (produced)
-            {
-                var sample = produced ?? provided!;
-                bool key = false;
-                try { key = sample.GetUInt32(SampleAttributeKeys.CleanPoint) != 0; } catch (SharpGenException) { }
-                _outputs.Enqueue((ReadSample(sample), key));
-            }
+            var sample = produced ?? provided!;
+            if (produced is not null) provided?.Dispose();
+            bool key = false;
+            try { key = sample.GetUInt32(SampleAttributeKeys.CleanPoint) != 0; } catch (SharpGenException) { }
+            _outputs.Enqueue((sample, key)); // 由 Encode 取出後釋放
         }
     }
 
@@ -168,23 +173,22 @@ public sealed class MfH264HardwareEncoder : IVideoEncoder
         // 低延遲模式通常在一張畫面時間內輸出；等不到就下次一併送出（最多延遲一張）
         _haveOutput.Wait(TimeSpan.FromTicks(_duration * 2));
 
-        var parts = new List<byte[]>();
+        var samples = new List<IMFSample>();
         bool keyframe = false;
-        while (_outputs.TryDequeue(out var o))
+        try
         {
-            parts.Add(o.Data);
-            keyframe |= o.Keyframe;
+            while (_outputs.TryDequeue(out var o))
+            {
+                samples.Add(o.Sample);
+                keyframe |= o.Keyframe;
+            }
+            if (samples.Count == 0) return null;
+            return EncodedOutput.Build(samples, keyframe, ref _sequenceHeader, TryGetSequenceHeader);
         }
-        if (parts.Count == 0) return null;
-
-        byte[] data = parts.Count == 1 ? parts[0] : parts.SelectMany(p => p).ToArray();
-        if (!keyframe) keyframe = H264.ContainsIdr(data);
-        if (keyframe && !H264.ContainsSps(data))
+        finally
         {
-            _sequenceHeader ??= TryGetSequenceHeader();
-            if (_sequenceHeader is { Length: > 0 }) data = [.. _sequenceHeader, .. data];
+            foreach (var x in samples) x.Dispose();
         }
-        return new EncodedFrame(data, keyframe);
     }
 
     private byte[]? TryGetSequenceHeader()
@@ -219,6 +223,7 @@ public sealed class MfH264HardwareEncoder : IVideoEncoder
         catch (SharpGenException) { }
         try { MediaFactory.MFShutdownObject(_mft); } catch (SharpGenException) { } // 讓 GetEvent 結束等待
         _pump.Join(TimeSpan.FromSeconds(2));
+        while (_outputs.TryDequeue(out var leftover)) leftover.Sample.Dispose();
         _events.Dispose();
         _mft.Dispose();
         _needInput.Dispose();

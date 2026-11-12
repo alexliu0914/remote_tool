@@ -182,7 +182,7 @@ $C = ".\src\RemoteTool.Controller\bin\Release\net10.0-windows\Controller.exe"
 > | --- | --- |
 > | 第一行為 `True` | 這個 PowerShell 已經是系統管理員權限，再提權不會詢問。請改開一般 PowerShell；**Host 也應從一般 PowerShell 啟動**（D-003：被控端不提升權限） |
 > | `EnableLUA` 為 0 | UAC 已關閉，此電腦無法測 V-08 |
-> | `ConsentPromptBehaviorAdmin` 為 0 | UAC 設為「不要通知」，此電腦無法測 V-08 |
+> | `ConsentPromptBehaviorAdmin` 為 0 | 系統管理員帳戶提權時「不詢問、直接提升」（UAC 滑桿最下面「不要通知」），此電腦無法測 V-08 |
 > | `PromptOnSecureDesktop` 為 0 | UAC 會出現但**螢幕不變暗**（不使用安全桌面），擷取不會中斷，V-08 預期結果不適用 |
 >
 > 無法測時記為「未測（環境：…）」。是否調整 UAC 設定由使用者自行決定，本測試不要求變更安全設定。
@@ -214,6 +214,11 @@ dotnet publish src/RemoteTool.Controller -c Release -r win-x64 --self-contained 
 ```
 
 把整個 `publish\Host` 資料夾複製到 B，例如 `C:\RemoteTool\Host\`。B 不需安裝 .NET。
+
+### 5.2.1 B 的 UAC 設定
+
+V-08（UAC 暫停與恢復）需要 UAC 為 Windows **預設設定**（控制台 →「變更使用者帳戶控制設定」→ 由上往下第二格「只在應用程式嘗試變更我的電腦時通知我（預設）」）。
+可用第四節「V-08 沒有出現 UAC」的指令檢查：預設值為 `EnableLUA=1`、`ConsentPromptBehaviorAdmin=5`、`PromptOnSecureDesktop=1`。
 
 ### 5.3 B：開放防火牆（系統管理員 PowerShell，只需一次）
 

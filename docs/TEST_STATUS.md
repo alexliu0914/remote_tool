@@ -49,10 +49,12 @@
 | T-016 | 2026-11-12 | 15f0404 之建置 | 使用者 Windows 11 實機，單機 | 使用者 | A1 畫面 V-02～V-13 | **部分 FAIL** | 使用者回報：V-02、V-03、V-06、V-07、V-09、V-10、V-13 **PASS**；V-04 功能正確但核取方塊顯示為按鈕、文字不變（**介面問題**）；V-05 按下「沒反應」（**FAIL**：畫面內容相同，沒有可見回饋）；V-08 **未測**（不知用哪個程式觸發 UAC）；V-11 **未測（無 2K / 4K 設備）**；V-12 **FAIL**：記憶體慢速增加，Host 較明顯 |
 | T-017 | 2026-11-12 | 本筆提交 | 雲端 Linux（.NET 10） | Claude | T-016 修正：V-04 改為顯示模式的切換按鈕；V-05 加 keyframe 標記與狀態列回饋；V-12 送出 / 讀取緩衝區重複使用、重送不複製整張畫面、Host `--memlog` 診斷；新增長時間串流記憶體測試。全部回歸 | PASS | 131/131（Protocol 52、Connection 55、Video 24），連續 2 次。記憶體測試（30 秒、每張整張變動、1280×720、約 27 FPS）：修正前 gen2 GC 559 次、工作集 179～232 MB 擺盪；修正後 10 次、243～247 MB 持平；受控堆積兩版強制 GC 後皆持平（無受控記憶體洩漏）。**Windows 上的 DXGI 原生記憶體無法在雲端量測，V-12 需實機以 `--memlog` 重測** |
 | T-018 | 2026-11-12 | 84567d1 之 TESTING.md | 使用者 Windows 11 實機，單機 | 使用者 | V-08 以 `Start-Process notepad -Verb RunAs` 觸發 UAC | 未測（UAC 未出現） | 指令執行後沒有出現 UAC。可能原因：PowerShell 已是系統管理員權限、UAC 關閉或設為不通知、或 Windows 11 新版記事本（封裝 App）不經 UAC。已改用 `Start-Process cmd -Verb RunAs` 並加入檢查步驟，待使用者回報檢查結果 |
+| T-019 | 2026-11-12 | 5698b8b 之 TESTING.md | 使用者 Windows 11 實機（測試機 A） | 使用者 | V-08 環境檢查 | 未測（環境：UAC 設為不通知） | PowerShell 非系統管理員（`False`，前面測試的 Host 皆為一般權限，結果有效）。`EnableLUA=1`、`ConsentPromptBehaviorAdmin=0`（系統管理員帳戶提權不詢問）、`PromptOnSecureDesktop=0`（不使用安全桌面）。此設定下 UAC 提示與安全桌面都不會出現，V-08 無法在此電腦驗證；需在 UAC 為預設設定的電腦（或使用者自行暫時調回預設）測試。G0-03 / VID-02 的 UAC 部分同樣受此限制 |
 
 ## 4. 尚待人工執行
 
 | 項目 | 對應 | 需要 | 步驟 |
 | --- | --- | --- | --- |
-| A1 單機畫面重測 | G0-02（畫面部分） | 一台 Windows 11 | [TESTING.md](TESTING.md) 4.4 的 V-04、V-05、V-08、V-12（T-016 未通過或未測項）；V-11 需 2K / 4K 螢幕 |
+| A1 單機畫面重測 | G0-02（畫面部分） | 一台 Windows 11 | [TESTING.md](TESTING.md) 4.4 的 V-04、V-05、V-12（T-016 未通過項）；V-11 需 2K / 4K 螢幕 |
+| V-08 UAC | G0-02、G0-03、VID-02 | **UAC 為 Windows 預設設定**的電腦（測試機 A 為「不通知」，見 T-019） | [TESTING.md](TESTING.md) 4.4 V-08；雙機測試時建議被控端 B 使用預設 UAC 設定 |
 | 雙機驗證 | G0-01、G0-02 | 兩台實體 Windows 11、同一區域網路 | [TESTING.md](TESTING.md) 第五節 5.6 |

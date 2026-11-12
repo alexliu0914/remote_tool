@@ -12,9 +12,23 @@ public partial class LoginWindow : Window
 {
     private readonly ControllerSettings _settings = ControllerSettings.Load();
 
+    /// <summary>建置版本（含 git commit 前 7 碼），顯示在標題列以確認是否為最新建置。</summary>
+    internal static string BuildVersion
+    {
+        get
+        {
+            var v = typeof(LoginWindow).Assembly
+                .GetCustomAttributes(typeof(System.Reflection.AssemblyInformationalVersionAttribute), false)
+                .OfType<System.Reflection.AssemblyInformationalVersionAttribute>().FirstOrDefault()?.InformationalVersion ?? "未知";
+            int plus = v.IndexOf('+');
+            return plus >= 0 && v.Length > plus + 8 ? v[..(plus + 8)] : v;
+        }
+    }
+
     public LoginWindow()
     {
         InitializeComponent();
+        Title = $"RemoteTool 控制端　版本 {BuildVersion}";
         HostBox.Text = _settings.Host;
         PortBox.Text = _settings.Port.ToString();
         UserBox.Text = _settings.Username;

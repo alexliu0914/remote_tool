@@ -45,7 +45,7 @@ git checkout claude/sweet-gauss-x289io
 git pull
 ```
 
-**每次更新後都要重新建置**，否則執行的還是舊程式：
+**每次更新後都要重新建置**，否則執行的還是舊程式（建置前請先關閉 Host 與控制端，否則檔案被占用時會建置失敗、仍留著舊程式）：
 
 ```powershell
 dotnet build RemoteTool.sln -c Release
@@ -130,6 +130,9 @@ $C = ".\src\RemoteTool.Controller\bin\Release\net10.0-windows\Controller.exe"
 | R-13 | 第一次連線的指紋視窗，等 30 秒以上才按「信任並連線」 | 仍能連線成功（不受被控端 15 秒握手時限影響） |
 | R-15 | 不重新設定，直接用舊的帳密檔啟動 Host（只在升級後第一次做；若已重設可略過） | Host 顯示「帳密檔為舊格式或不支援的演算法，請重新執行 Host.exe --setup」並結束 |
 | R-16 | `& $H --setup` 時輸入 9 個字的密碼 | 顯示「密碼長度須為 10 ~ 1024 字」，不儲存 |
+
+> **確認版本**：Host 啟動畫面第一行與控制端登入視窗標題會顯示「版本 1.0.0+xxxxxxx」，後面 7 碼應與 `git log --oneline -1` 開頭相同。
+> Host 遇到打錯的參數會顯示「不認得的參數…請檢查拼字」並結束。
 
 #### 4.3.1 規劃書對齊第二批（G-03、G-04、G-06、NET-03）
 

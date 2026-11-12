@@ -31,6 +31,7 @@ static class HostProgram
                 PrintHelp();
                 return 0;
             }
+            ValidateArguments(args);
             if (args.Contains("--setup") || args.Contains("--add-user"))
                 return Setup();
             if (args.Contains("--list-users"))
@@ -67,6 +68,32 @@ static class HostProgram
         }
     }
 
+    /// <summary>不認得的參數一律報錯（避免打錯字被默默忽略，例如 --text-drop-video）。</summary>
+    private static void ValidateArguments(string[] args)
+    {
+        string[] flags = ["--setup", "--add-user", "--list-users", "--fingerprint", "--memlog"];
+        string[] withValue = ["--port", "--fps", "--max-width", "--test-drop-video", "--test-drop-file", "--remove-user"];
+        for (int i = 0; i < args.Length; i++)
+        {
+            if (flags.Contains(args[i])) continue;
+            if (withValue.Contains(args[i]))
+            {
+                if (i + 1 >= args.Length) throw new ArgumentException($"{args[i]} 後面缺少值");
+                i++;
+                continue;
+            }
+            throw new ArgumentException($"不認得的參數「{args[i]}」，請檢查拼字");
+        }
+    }
+
+    /// <summary>建置版本（含 git commit），用來確認執行的是不是最新建置。</summary>
+    public static string BuildVersion =>
+        System.Reflection.Assembly.GetEntryAssembly()?
+            .GetCustomAttributes(typeof(System.Reflection.AssemblyInformationalVersionAttribute), false)
+            .OfType<System.Reflection.AssemblyInformationalVersionAttribute>().FirstOrDefault()?.InformationalVersion is { } v
+            ? (v.IndexOf('+') is int plus and >= 0 && v.Length > plus + 8 ? v[..(plus + 8)] : v)
+            : "未知";
+
     private static void PrintHelp()
     {
         Console.WriteLine("""
@@ -92,6 +119,7 @@ static class HostProgram
               --test-drop-file <秒>     每條 File 連線建立後經過指定秒數即由被控端關閉
             """);
         Console.WriteLine($"資料位置：{AppPaths.DataDirectory}");
+        Console.WriteLine($"版本：{BuildVersion}");
     }
 
     /// <summary>讀取帳號集合；檔案不存在回傳空集合，格式問題印出訊息並回傳 null。</summary>
@@ -289,7 +317,7 @@ static class HostProgram
         }
 
         Console.WriteLine();
-        Console.WriteLine("RemoteTool Host（被控端）已啟動");
+        Console.WriteLine($"RemoteTool Host（被控端）已啟動　版本 {BuildVersion}");
         Console.WriteLine($"  帳號：{string.Join("、", credentials.Accounts.Select(a => a.Username))}");
         Console.WriteLine($"  金鑰與設定保護：{SecretProtector.Default.Name}");
         Console.WriteLine($"  埠：  {server.Port}");

@@ -323,6 +323,12 @@ public sealed class ControllerSession : IAsyncDisposable
     /// <summary>子連線成功重連的累計次數（測試與記錄用）。</summary>
     public int ReconnectCount => Volatile.Read(ref _reconnects);
 
+    private int _videoReconnects, _fileReconnects;
+
+    /// <summary>指定角色成功重連的累計次數。</summary>
+    public int GetReconnectCount(ChannelKind role)
+        => role == ChannelKind.Video ? Volatile.Read(ref _videoReconnects) : Volatile.Read(ref _fileReconnects);
+
     /// <summary>最近一次心跳的來回時間；尚未量到為 null。</summary>
     public TimeSpan? LastRoundTrip
     {
@@ -507,6 +513,8 @@ public sealed class ControllerSession : IAsyncDisposable
                     var old = Interlocked.Exchange(ref Slot(role), stream);
                     try { await old.DisposeAsync().ConfigureAwait(false); } catch { /* 已斷 */ }
                     Interlocked.Increment(ref _reconnects);
+                    if (role == ChannelKind.Video) Interlocked.Increment(ref _videoReconnects);
+                    else Interlocked.Increment(ref _fileReconnects);
                     SetState(role, SubChannelState.Connected, null);
                     break;
                 }

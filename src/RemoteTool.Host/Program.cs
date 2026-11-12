@@ -227,8 +227,11 @@ static class HostProgram
         }
         catch (OperationCanceledException) when (seconds > 0 && !ctx.Token.IsCancellationRequested)
         {
-            Log($"[測試] 依 --test-drop 設定關閉 {ctx.Channel} 子連線");
+            // 影像迴圈可能拋出取消，也可能正常結束；兩種情況都在下面記錄
         }
+        // 影像串流在取消時會正常結束而不拋例外，所以以計時器狀態判斷是否為測試關閉
+        if (seconds > 0 && dropCts.IsCancellationRequested && !ctx.Token.IsCancellationRequested)
+            Log($"[測試] 依 --test-drop 設定關閉 {ctx.Channel} 子連線");
     }
 
     private static async Task<int> ServeAsync(int port, VideoStreamerOptions video, bool memlog, TestDrops drops)

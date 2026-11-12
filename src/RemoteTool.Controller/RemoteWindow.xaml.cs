@@ -179,6 +179,9 @@ public partial class RemoteWindow : Window
         var parts = new List<string> { _stats };
         if (_note.Length > 0) parts.Add(_note);
         if (_fileNote.Length > 0) parts.Add(_fileNote);
+        // 重連次數一直顯示（重連通常 1～2 秒就完成，提示容易錯過）
+        int v = _session.GetReconnectCount(ChannelKind.Video), f = _session.GetReconnectCount(ChannelKind.File);
+        if (v + f > 0) parts.Add($"已重連：畫面 {v} 次、檔案 {f} 次");
         StatusText.Text = string.Join("    ｜ ", parts);
     }
 

@@ -63,7 +63,7 @@ dotnet test RemoteTool.sln -c Release
 | --- | --- | --- |
 | RemoteTool.Protocol.Tests | 52 | Protocol V1：欄位寬度與位元組順序、長度上限、序號、未知 / 不允許的類型、惡意 MessagePack、緩衝區重複使用 |
 | RemoteTool.Connection.Tests | 73 | 127.0.0.1 真實 TLS 1.3：Argon2id、多帳號、DPAPI 檔案格式與遷移、以公鑰識別主機、節流、指紋、探測、Busy、token、子連線獨立重連、心跳、協定錯誤 |
-| RemoteTool.Video.Tests | 24 | 區塊編解碼逐像素一致、keyframe 標記、縮放、解碼防護、經 TLS 的影像串流、FPS 上限、長時間串流記憶體（約 30 秒） |
+| RemoteTool.Video.Tests | 25 | 區塊編解碼逐像素一致、keyframe 標記、縮放、解碼防護、經 TLS 的影像串流、FPS 上限、長時間串流記憶體（約 30 秒） |
 
 ## 四、單機實測（一台電腦）
 
@@ -141,8 +141,8 @@ $C = ".\src\RemoteTool.Controller\bin\Release\net10.0-windows\Controller.exe"
 | R-18 | 用記事本開啟 `%LOCALAPPDATA%\RemoteTool\host-credentials.json`、`known-hosts.json`（只看，不要存檔） | 第一行為 `RTSEC1:DPAPI`，之後是亂碼；**看不到帳號名稱與指紋** |
 | R-19 | ① `& $H --setup` 新增第二個帳號（例如 `bob`）② `& $H --list-users` ③ 用第一個帳號登入 → 按「**中斷連線**」回到登入視窗 → 再用 `bob` 登入（**同一時間只允許一個控制端**，第一個連線沒中斷時第二個會顯示「已有其他控制端連線中」，這是預期行為）④ 中斷後 `& $H --remove-user bob`，再用 bob 登入 | ② 列出兩個帳號 ③ 兩個帳號都能登入；Host 視窗每次顯示「帳號 … 登入成功」，中斷時顯示「工作階段結束」④ bob 顯示「帳號或密碼錯誤」，原帳號仍可登入 |
 | R-20 | 先用 `127.0.0.1` 連線成功；中斷後改用 Host 視窗顯示的「本機 IP」連線 | 第二次**不詢問指紋**直接登入（以主機公鑰識別，不是 IP） |
-| R-21 | 關閉 Host，改用 `& $H --test-drop-video 20` 啟動後連線，觀察 1 分鐘 | 約每 20 秒畫面變暗並顯示「畫面重新連線中…（非即時）」，1～3 秒內恢復；**畫面視窗不關閉、不回登入視窗**；Host 視窗出現「[測試] 依 --test-drop 設定關閉 Video 子連線」與「重新發出 Video token」 |
-| R-22 | 關閉 Host，改用 `& $H --test-drop-file 20` 啟動後連線 | 約每 20 秒狀態列短暫出現「檔案連線重新連線中…」後消失；畫面不受影響 |
+| R-21 | 關閉 Host，改用 `& $H --test-drop-video 20` 啟動（啟動畫面應有「[測試模式] 子連線定時關閉：Video 20 秒」），連線後觀察 1 分鐘 | ① 狀態列右側出現並累加「已重連：畫面 N 次」，約每 20 秒加 1 ② 每次重連時畫面短暫變暗、顯示「畫面重新連線中…（非即時）」約 1～2 秒（很快，可能不易看到，以 ① 為準）③ **畫面視窗不關閉、不回登入視窗** ④ Host 視窗出現「[測試] 依 --test-drop 設定關閉 Video 子連線」與「重新發出 Video token」 |
+| R-22 | 關閉 Host，改用 `& $H --test-drop-file 20` 啟動後連線，觀察 1 分鐘 | 狀態列「已重連：… 檔案 N 次」約每 20 秒加 1；畫面不受影響；Host 視窗出現「[測試] 依 --test-drop 設定關閉 File 子連線」與「重新發出 File token」 |
 
 > 重連失敗（30 秒內連不回）→ 顯示「畫面連線失敗」與「重試畫面連線」按鈕的情境，由自動測試涵蓋（`SubChannelReconnect_FailsAfterWindow_ThenManualRetrySucceeds`）；雙機時可在 D-03 觀察。
 | R-14 | ① 用控制端連線一次（成功或密碼錯誤都可以）② 按登入視窗右上角 ✕ 關閉整個控制端 ③ 重新執行 `& $C` | 登入視窗的 IP、埠、帳號已自動填好，游標停在密碼欄；**密碼欄是空的**（不記密碼）。設定存在 `%LOCALAPPDATA%\RemoteTool\controller-settings.json` |
@@ -299,7 +299,7 @@ Test-NetConnection 192.168.1.20 -Port 52100
 | 項目 | 通過條件 |
 | --- | --- |
 | 建置 | 0 個錯誤 |
-| 自動測試 | 52 + 73 + 24 個全部通過 |
+| 自動測試 | 52 + 73 + 25 個全部通過 |
 | 單機回歸 | 4.3 的 R-01～R-22 全部符合預期 |
 | A1 單機 | 4.4 的 V-01～V-13 全部符合預期 |
 | 雙機 | 5.6 全部符合預期（G0-01 才可標 PASS） |

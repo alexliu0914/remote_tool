@@ -3,6 +3,7 @@ using System.Net.Sockets;
 using System.Security.Authentication;
 using System.Windows;
 using RemoteTool.Connection;
+using RemoteTool.Media;
 using RemoteTool.Protocol;
 using RemoteTool.Video;
 
@@ -11,6 +12,14 @@ namespace RemoteTool.Controller;
 public partial class LoginWindow : Window
 {
     private readonly ControllerSettings _settings = ControllerSettings.Load();
+
+    /// <summary>這台電腦能否解 H.264（第一次連線時檢查一次）。</summary>
+    private static readonly Lazy<(bool Ok, string Detail)> H264Decoder = new(() =>
+    {
+        bool ok = MfH264Decoder.IsAvailable(out string detail);
+        DiagnosticLog.Write(ok ? $"H.264 解碼器可用：{detail}" : $"H.264 解碼器不可用：{detail}");
+        return (ok, detail);
+    });
 
     /// <summary>建置版本（含 git commit 前 7 碼），顯示在標題列以確認是否為最新建置。</summary>
     internal static string BuildVersion
@@ -101,6 +110,9 @@ public partial class LoginWindow : Window
         var canvas = new FrameCanvas();
         RemoteWindow? remote = null;
         ControllerSession? session = null;
+        var h264 = await Task.Run(() => H264Decoder.Value);
+        var receiver = new VideoReceiver(canvas, h264.Ok ? () => new MfH264Decoder() : null);
+        long lastKeyframeRequest = 0;
         try
         {
             var knownHosts = new KnownHostsStore(AppPaths.KnownHostsFile);
@@ -134,11 +146,21 @@ public partial class LoginWindow : Window
                 KnownHosts = knownHosts,
                 // 上面已處理首次連線；走到這裡仍是陌生主機代表狀態異常，一律不信任。
                 ConfirmNewHost = (_, _) => false,
-                // 背景執行緒：先解到畫布，畫面視窗存在時再通知它更新顯示。
+                VideoCapabilities = h264.Ok
+                    ? [ProtocolInfo.CapabilityVideoH264, ProtocolInfo.CapabilityVideoTiles]
+                    : [ProtocolInfo.CapabilityVideoTiles],
+                // 背景執行緒：先解到畫布（H.264 或區塊差異），畫面視窗存在時再通知它更新顯示。
                 VideoFrameReceived = frame =>
                 {
-                    if (canvas.Apply(MessageCodec.Decode<VideoTileUpdate>(frame), out var dirty))
-                        Volatile.Read(ref remote)?.OnFrameCompleted(dirty, canvas.LastCompletedWasKeyframe);
+                    if (receiver.Handle(frame, out var dirty, out bool keyframe, out bool needKeyframe))
+                        Volatile.Read(ref remote)?.OnFrameCompleted(dirty, keyframe);
+                    if (needKeyframe && Environment.TickCount64 - Interlocked.Read(ref lastKeyframeRequest) > 1000)
+                    {
+                        // 解碼失敗：最多每秒要求一次關鍵幀
+                        Interlocked.Exchange(ref lastKeyframeRequest, Environment.TickCount64);
+                        var s = Volatile.Read(ref session);
+                        if (s is not null) _ = s.RequestKeyframeAsync(canvas.LastFrameId).AsTask();
+                    }
                 },
             });
             DiagnosticLog.Write($"連線成功 {hostKey}");
@@ -181,7 +203,7 @@ public partial class LoginWindow : Window
         if (session is null) return;
 
         // 視窗建立前已收到的畫面已在 canvas 中，視窗載入時會整張繪出。
-        var window = new RemoteWindow(session, canvas);
+        var window = new RemoteWindow(session, receiver);
         Volatile.Write(ref remote, window);
         window.Closed += (_, _) =>
         {

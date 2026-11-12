@@ -4,6 +4,7 @@ using System.Net.Sockets;
 using System.Security.Cryptography.X509Certificates;
 using RemoteTool.Connection;
 using RemoteTool.Host;
+using RemoteTool.Media;
 using RemoteTool.Protocol;
 using RemoteTool.Shared;
 using RemoteTool.Video;
@@ -49,12 +50,31 @@ static class HostProgram
                 return 0;
             }
 
+            string codec = ParseChoice(args, "--codec", "auto", ["auto", "h264", "tiles"]);
+            int bitrate = ParseIntOption(args, "--bitrate", 6000, 500, 50000);
+            bool h264 = false;
+            string h264Detail = "已用 --codec tiles 停用";
+            if (codec != "tiles")
+            {
+                h264 = MfH264Encoder.IsAvailable(out h264Detail);
+                if (!h264 && codec == "h264")
+                {
+                    Console.Error.WriteLine($"無法使用 H.264 編碼器：{h264Detail}");
+                    return 1;
+                }
+            }
+            // H.264 時預設 30 FPS（規劃書目標），區塊差異（A1）維持 10 FPS
+            int fps = ParseIntOption(args, "--fps", h264 ? 30 : 10, 1, 60);
             var video = new VideoStreamerOptions
             {
-                MaxFps = ParseIntOption(args, "--fps", 10, 1, 30),
+                MaxFps = fps,
                 MaxWidth = ParseIntOption(args, "--max-width", 1920, 320, 8192),
                 Log = Log,
+                EncoderFactory = h264 ? (w, h) => new MfH264Encoder(w, h, fps, bitrate, Log) : null,
             };
+            _videoFormat = h264
+                ? $"H.264 可用（{h264Detail}），{bitrate} kbps；控制端不支援時改用區塊差異"
+                : $"區塊差異（A1）—— H.264 不可用：{h264Detail}";
             var drops = new TestDrops(
                 ParseIntOption(args, "--test-drop-video", 0, 5, 3600),
                 ParseIntOption(args, "--test-drop-file", 0, 5, 3600));
@@ -72,7 +92,7 @@ static class HostProgram
     private static void ValidateArguments(string[] args)
     {
         string[] flags = ["--setup", "--add-user", "--list-users", "--fingerprint", "--memlog"];
-        string[] withValue = ["--port", "--fps", "--max-width", "--test-drop-video", "--test-drop-file", "--remove-user"];
+        string[] withValue = ["--port", "--fps", "--max-width", "--test-drop-video", "--test-drop-file", "--remove-user", "--codec", "--bitrate"];
         for (int i = 0; i < args.Length; i++)
         {
             if (flags.Contains(args[i])) continue;
@@ -107,8 +127,10 @@ static class HostProgram
               Host.exe --port <埠>      以指定埠啟動
               Host.exe --fingerprint    顯示本機主機指紋
 
-            畫面（A1 PoC）選項：
-              --fps <1~30>              畫面更新上限，預設 10
+            畫面選項：
+              --codec auto|h264|tiles   影像格式：auto（預設，H.264 可用就用）、h264（強制）、tiles（A1 區塊差異）
+              --bitrate <kbps>          H.264 位元率，預設 6000
+              --fps <1~60>              畫面更新上限，預設 H.264 為 30、區塊差異為 10
               --max-width <寬>          畫面寬度上限，超過以整數倍縮小，預設 1920
 
             診斷：
@@ -223,6 +245,17 @@ static class HostProgram
             $"GC 0/1/2 = {GC.CollectionCount(0)}/{GC.CollectionCount(1)}/{GC.CollectionCount(2)}");
     }
 
+    private static string _videoFormat = "";
+
+    private static string ParseChoice(string[] args, string name, string defaultValue, string[] choices)
+    {
+        int i = Array.IndexOf(args, name);
+        if (i < 0) return defaultValue;
+        if (i + 1 >= args.Length || !choices.Contains(args[i + 1]))
+            throw new ArgumentException($"{name} 後面要接 {string.Join(" / ", choices)}");
+        return args[i + 1];
+    }
+
     private static int ParseIntOption(string[] args, string name, int defaultValue, int min, int max)
     {
         int i = Array.IndexOf(args, name);
@@ -236,7 +269,10 @@ static class HostProgram
     private static async Task RunVideoAsync(SubChannelContext ctx, VideoStreamerOptions options)
     {
         using var capture = new DxgiScreenCapture(Log);
-        await VideoStreamer.RunAsync(capture, ctx.Stream, ctx.Incoming, options, ctx.Token);
+        bool clientH264 = ctx.ClientCapabilities.Contains(ProtocolInfo.CapabilityVideoH264);
+        if (options.EncoderFactory is not null && !clientH264)
+            Log("控制端未宣告 H.264，此連線使用區塊差異格式");
+        await VideoStreamer.RunAsync(capture, ctx.Stream, ctx.Incoming, options, ctx.Token, clientH264);
     }
 
     /// <summary>測試用：子連線建立後經過指定秒數就關閉（0 = 不關閉）。</summary>
@@ -247,7 +283,7 @@ static class HostProgram
         int seconds = ctx.Channel == ChannelKind.Video ? drops.VideoSeconds : drops.FileSeconds;
         using var dropCts = CancellationTokenSource.CreateLinkedTokenSource(ctx.Token);
         if (seconds > 0) dropCts.CancelAfter(TimeSpan.FromSeconds(seconds));
-        var scoped = new SubChannelContext(ctx.Channel, ctx.Stream, ctx.Incoming, ctx.Remote, dropCts.Token);
+        var scoped = new SubChannelContext(ctx.Channel, ctx.Stream, ctx.Incoming, ctx.Remote, dropCts.Token, ctx.ClientCapabilities);
         try
         {
             if (ctx.Channel == ChannelKind.Video) await RunVideoAsync(scoped, video);
@@ -321,7 +357,8 @@ static class HostProgram
         Console.WriteLine($"  帳號：{string.Join("、", credentials.Accounts.Select(a => a.Username))}");
         Console.WriteLine($"  金鑰與設定保護：{SecretProtector.Default.Name}");
         Console.WriteLine($"  埠：  {server.Port}");
-        Console.WriteLine($"  畫面：上限 {video.MaxFps} FPS、寬 {video.MaxWidth}（A1 PoC）");
+        Console.WriteLine($"  畫面：上限 {video.MaxFps} FPS、寬 {video.MaxWidth}");
+        Console.WriteLine($"  影像格式：{_videoFormat}");
         if (drops.VideoSeconds > 0 || drops.FileSeconds > 0)
             Console.WriteLine($"  [測試模式] 子連線定時關閉：Video {drops.VideoSeconds} 秒、File {drops.FileSeconds} 秒");
         Console.WriteLine("  本機 IP（控制端連這個）：");

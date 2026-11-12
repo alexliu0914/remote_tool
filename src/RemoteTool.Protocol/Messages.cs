@@ -139,6 +139,24 @@ public sealed record KeyframeRequest(
     public static MessageType Type => MessageType.KeyframeRequest;
 }
 
+/// <summary>
+/// H.264 影像（A2，PLAN §5.1）：一張編碼後的畫面（Annex B 位元串流）。大畫面分塊傳送：
+/// 同一張畫面的各塊 <see cref="FrameId"/> 相同，<see cref="ChunkIndex"/> 由 0 遞增到 <see cref="ChunkCount"/> − 1。
+/// </summary>
+[MessagePackObject]
+public sealed record VideoFrame(
+    [property: Key(0)] long FrameId,
+    [property: Key(1)] int Width,
+    [property: Key(2)] int Height,
+    [property: Key(3)] bool IsKeyframe,
+    [property: Key(4)] int ChunkIndex,
+    [property: Key(5)] int ChunkCount,
+    [property: Key(6)] byte[] Data,
+    [property: Key(7)] string Codec) : IMessage
+{
+    public static MessageType Type => MessageType.VideoFrame;
+}
+
 /// <summary>畫面的一個矩形區塊，<see cref="Data"/> 為 BGRA 逐列排列後以 Deflate 壓縮。</summary>
 [MessagePackObject]
 public sealed record VideoTile(

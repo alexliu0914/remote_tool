@@ -17,7 +17,7 @@
 | G-07 | Session Token | §7：發出後 **30 秒**內須使用；子連線重連需在 Control 上**重新申請**；綁定帳號、Windows Session ID、Control 連線 ID、角色；**不直接送出 token**，改以 nonce + HMAC-SHA256(Token, nonce + 角色) 證明；Spike 0 確認能否綁定 TLS exporter（RFC 9266） | 一次性、綁角色，但：無 30 秒期限、用掉即自動補發、子連線直接送出 token | 加 30 秒期限；改為向 Control 申請；改 nonce + HMAC；調查 TLS exporter | 否 | **已修正**（G-08 提交）：30 秒期限、向 Control 重新申請、nonce + HMAC；TLS exporter 不可用（D-039） |
 | G-08 | 封包表頭 | §7：`[Length][MessageType][RequestId][Sequence]` + MessagePack；握手帶 ProtocolVersion 與 **Capabilities** | `[Length][Channel][Type]`；Hello 只有版本與通道，無 Capabilities | 改為規劃書格式（保留 Channel 檢查改由連線角色決定），Hello 加 Capabilities | **是**：見下方說明 | **已修正**（G-08 提交）：Protocol V1，見 PROTOCOL_V1.md |
 | G-09 | .NET 版本 | §4：**.NET 10（LTS）** | .NET 8（骨架起即如此，README 也寫 8） | 升級到 .NET 10 | **是** | **已修正**（c195c43）：.NET 10 |
-| G-10 | 送出佇列與背壓 | §7：每條連線有上限的送出佇列；畫面佇列塞住時要求 IDR | A1 為零佇列（一張送完才擷取下一張），符合精神 | A2 導入 H.264 時依規劃書實作 IDR 策略 | 否 | A2 處理 |
+| G-10 | 送出佇列與背壓 | §7：每條連線有上限的送出佇列；畫面佇列塞住時要求 IDR | A1 為零佇列（一張送完才擷取下一張），符合精神 | A2 導入 H.264 時依規劃書實作 IDR 策略 | 否 | **已處理**（A2a，D-051）：零佇列 + 每張完整送出；解碼失敗時要求關鍵幀 |
 
 ## 二、文件與規劃書不符（已於本次修正文件）
 

@@ -56,6 +56,19 @@ public sealed class FrameCanvas
         }
     }
 
+    /// <summary>以一張完整畫面（H.264 解碼結果）取代畫布內容，回傳變動範圍（整張）。</summary>
+    public PixelRect ApplyFullFrame(FrameBuffer frame, bool isKeyframe)
+    {
+        lock (SyncRoot)
+        {
+            frame.CopyTo(_buffer);
+            _pendingDirty = default;
+            CompletedFrames++;
+            LastCompletedWasKeyframe = isKeyframe;
+            return new PixelRect(0, 0, frame.Width, frame.Height);
+        }
+    }
+
     private void ApplyTile(VideoTile tile)
     {
         if (tile is null || tile.Data is null)

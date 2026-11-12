@@ -44,9 +44,11 @@ public sealed class HostServerOptions
 
 /// <summary>交給 <see cref="HostServerOptions.SubChannelHandler"/> 的子連線。</summary>
 public sealed class SubChannelContext(ChannelKind channel, FrameStream stream, ChannelReader<Frame> incoming,
-    IPEndPoint remote, CancellationToken token)
+    IPEndPoint remote, CancellationToken token, IReadOnlyList<string>? clientCapabilities = null)
 {
     public ChannelKind Channel { get; } = channel;
+    /// <summary>控制端在此連線 Hello 宣告的能力（例如 <see cref="ProtocolInfo.CapabilityVideoH264"/>）。</summary>
+    public IReadOnlyList<string> ClientCapabilities { get; } = clientCapabilities ?? [];
     /// <summary>用來送出封包（可與讀取並行）。不要從這裡讀取，對方送來的封包在 <see cref="Incoming"/>。</summary>
     public FrameStream Stream { get; } = stream;
     /// <summary>對方送來、已通過 Protocol V1 檢查（類型、角色、方向、序號）的封包。</summary>
@@ -251,7 +253,7 @@ public sealed class HostServer : IAsyncDisposable
             if (hello.Role == ChannelKind.Control)
                 await RunControlAsync(stream, remote, pending, hct).ConfigureAwait(false);
             else
-                await RunSubChannelAsync(stream, hello.Role, remote, pending, hct).ConfigureAwait(false);
+                await RunSubChannelAsync(stream, hello.Role, remote, pending, hct, hello.Capabilities ?? []).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (!_cts.IsCancellationRequested)
         {
@@ -460,7 +462,7 @@ public sealed class HostServer : IAsyncDisposable
     // ------------------------------------------------------------------ Video / File 子連線
 
     private async Task RunSubChannelAsync(FrameStream stream, ChannelKind role, IPEndPoint remote, PendingSlot pending,
-        CancellationToken handshakeToken)
+        CancellationToken handshakeToken, string[] clientCapabilities)
     {
         byte[] nonce = RandomNumberGenerator.GetBytes(ProtocolInfo.SubConnectNonceSize);
         await stream.WriteAsync(new SubConnectChallenge(nonce), cancellationToken: handshakeToken).ConfigureAwait(false);
@@ -489,7 +491,7 @@ public sealed class HostServer : IAsyncDisposable
         {
             await stream.WriteAsync(new SubConnectResult(true, AuthError.None), cancellationToken: handshakeToken).ConfigureAwait(false);
             Log($"{remote}：{role} 子連線已建立");
-            await RunSubChannelDataAsync(stream, role, remote, subCts).ConfigureAwait(false);
+            await RunSubChannelDataAsync(stream, role, remote, subCts, clientCapabilities).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (subCts.IsCancellationRequested && !_cts.IsCancellationRequested)
         {
@@ -503,7 +505,8 @@ public sealed class HostServer : IAsyncDisposable
     }
 
     /// <summary>讀取迴圈與 <see cref="HostServerOptions.SubChannelHandler"/> 並行；任一方結束即關閉子連線。</summary>
-    private async Task RunSubChannelDataAsync(FrameStream stream, ChannelKind role, IPEndPoint remote, CancellationTokenSource subCts)
+    private async Task RunSubChannelDataAsync(FrameStream stream, ChannelKind role, IPEndPoint remote, CancellationTokenSource subCts,
+        string[] clientCapabilities)
     {
         var handler = _options.SubChannelHandler;
         var incoming = Channel.CreateBounded<Frame>(new BoundedChannelOptions(64)
@@ -540,7 +543,7 @@ public sealed class HostServer : IAsyncDisposable
         var readTask = ReadLoopAsync();
         var handlerTask = handler is null
             ? Task.Delay(Timeout.Infinite, subCts.Token)
-            : Task.Run(() => handler(new SubChannelContext(role, stream, incoming.Reader, remote, subCts.Token)));
+            : Task.Run(() => handler(new SubChannelContext(role, stream, incoming.Reader, remote, subCts.Token, clientCapabilities)));
 
         await Task.WhenAny(readTask, handlerTask).ConfigureAwait(false);
         try { subCts.Cancel(); } catch (ObjectDisposedException) { }

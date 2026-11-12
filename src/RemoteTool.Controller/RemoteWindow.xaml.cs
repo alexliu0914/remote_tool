@@ -36,11 +36,14 @@ public partial class RemoteWindow : Window
     /// <summary>非 null 表示因連線中斷而關閉，內容為原因。</summary>
     public string? EndReason { get; private set; }
 
-    internal RemoteWindow(ControllerSession session, FrameCanvas canvas)
+    private readonly VideoReceiver _receiver;
+
+    internal RemoteWindow(ControllerSession session, VideoReceiver receiver)
     {
         InitializeComponent();
         _session = session;
-        _canvas = canvas;
+        _receiver = receiver;
+        _canvas = receiver.Canvas;
         Title = $"RemoteTool — {session.HostKey}";
 
         _statsTimer = new DispatcherTimer(TimeSpan.FromSeconds(1), DispatcherPriority.Background, OnStatsTick, Dispatcher);
@@ -169,7 +172,7 @@ public partial class RemoteWindow : Window
 
         string size = _bitmap is null ? "—" : $"{_bitmap.PixelWidth}×{_bitmap.PixelHeight}";
         string rtt = _session.LastRoundTrip is { } t ? $"{t.TotalMilliseconds:0} ms" : "—";
-        _stats = $"{size}    {_framesSinceTick} FPS    {kbps:0} kbps    心跳 {rtt}    （A1 PoC：只能看，尚無鍵鼠）";
+        _stats = $"{size}    {_framesSinceTick} FPS    {kbps:0} kbps    心跳 {rtt}    {_receiver.CurrentFormat}    （只能看，尚無鍵鼠）";
         _framesSinceTick = 0;
         UpdateStatus();
     }
@@ -223,5 +226,6 @@ public partial class RemoteWindow : Window
         _closing = true;
         _statsTimer.Stop();
         await _session.DisposeAsync();
+        _receiver.Dispose();
     }
 }

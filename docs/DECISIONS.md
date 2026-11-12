@@ -57,4 +57,7 @@
 | D-046 | 2026-11-12 | `host-cert.pfx`、`host-credentials.json`、`known-hosts.json` 以 DPAPI（CurrentUser，額外熵為檔名）保護，檔頭 `RTSEC1:DPAPI`；舊明文檔載入後自動改存（金鑰不變、指紋不變）；寫入先寫暫存檔再取代。非 Windows（CI / 開發）使用不加密的 PLAIN 並於檔頭標示。套件 System.Security.Cryptography.ProtectedData 10.0.15 | DEV（依 PLAN §4、§6，G-03） | 有效 |
 | D-047 | 2026-11-12 | 子連線獨立重連（PLAN §7、NET-03）：Video / File 中斷時 Control 保持，控制端以 SessionTokenRequest 取得新 token 後重連，退避 1、2、4…秒（上限 16 秒），30 秒內未成功顯示失敗，可手動重試；Video 重連期間畫面變暗標示「非即時」；任一子連線中斷不再結束工作階段。Host 測試專用開關 `--test-drop-video` / `--test-drop-file` 供實機驗證 | DEV（依 PLAN §7） | 有效 |
 | D-048 | 2026-11-12 | 多組帳號（G-04）：帳密檔 `{ Version, Accounts[] }`；帳號區分大小寫、不可重複；不存在的帳號仍以第一組參數完整計算雜湊（時間一致）；成功登入在 Host 記錄帳號（稽核），失敗不記錄輸入的帳號；舊單一帳號檔自動轉換 | DEV（依 PLAN §6） | 有效 |
+| D-049 | 2026-11-12 | A2 分兩步：A2a 先以 Media Foundation **同步軟體 MFT**（Windows 內建 Microsoft H.264 編碼器 / 解碼器）打通 DXGI → H.264 → 顯示，色彩轉換 BGRA↔NV12（BT.709 有限範圍）在 CPU 進行，顯示仍為 WriteableBitmap；A2a-2 加入硬體編碼（非同步 MFT、事件驅動）並在啟動時優先探測；A2b 導入 HwndHost + D3D11 與硬體解碼。理由：硬體非同步 MFT 複雜度高且無法在雲端執行，先在實機確認基本管線 | DEV | 待確認 |
+| D-050 | 2026-11-12 | 影像格式協商：控制端在 Video 連線 Hello 宣告 `video.h264`（解碼器可用時）與 `video.tiles`；被控端在控制端支援且編碼器可用時送 H.264（VideoFrame，分塊 ≤ 512 KB、每張 ≤ 64 塊、≤ 16 MiB），否則送區塊差異。編碼器在串流中故障時，該連線改用區塊差異並送完整畫面；控制端兩種格式都能處理、寫入同一畫布。H.264 預設 30 FPS、6000 kbps、CBR、低延遲、無 B 幀、GOP 2 秒；`--codec`、`--bitrate`、`--fps` 可調 | DEV | 待確認 |
+| D-051 | 2026-11-12 | PLAN §5.1「畫面落後時清空待送佇列並要求 IDR」：因採零佇列（一張送完才擷取下一張）且每張編碼結果都完整送出，參考鏈不會因丟幀損壞，此情境不會發生；落後時以降低擷取頻率處理。解碼失敗時控制端每秒最多要求一次關鍵幀（PLAN_GAPS G-10） | DEV | 待確認 |
 

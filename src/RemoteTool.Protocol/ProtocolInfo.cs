@@ -34,4 +34,17 @@ public static class ProtocolInfo
     /// <summary>心跳間隔與逾時（PLAN §7：每 2 秒一次，6 秒無回應即斷線）。</summary>
     public const int HeartbeatIntervalSeconds = 2;
     public const int HeartbeatTimeoutSeconds = 6;
+
+    /// <summary>Video 連線 Hello 的能力：控制端能解 H.264。</summary>
+    public const string CapabilityVideoH264 = "video.h264";
+
+    /// <summary>Video 連線 Hello 的能力：控制端能處理 A1 區塊差異格式（備援）。</summary>
+    public const string CapabilityVideoTiles = "video.tiles";
+
+    /// <summary>VideoFrame 單一封包的資料上限（一張畫面可分成多塊）。</summary>
+    public const int MaxVideoChunkBytes = 512 * 1024;
+
+    /// <summary>一張 H.264 畫面最多的分塊數與總大小上限（防惡意或損毀資料）。</summary>
+    public const int MaxVideoChunks = 64;
+    public const int MaxVideoFrameBytes = 16 * 1024 * 1024;
 }

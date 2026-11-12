@@ -38,6 +38,9 @@ public sealed class ControllerConnectOptions
     /// <b>Payload 只在回呼執行期間有效</b>（讀取緩衝區會重複使用），需要保留請自行複製。
     /// </summary>
     public Action<Frame>? VideoFrameReceived { get; init; }
+
+    /// <summary>Video 連線 Hello 宣告的能力（例如能解 H.264 時加入 <see cref="ProtocolInfo.CapabilityVideoH264"/>）。</summary>
+    public string[] VideoCapabilities { get; init; } = [ProtocolInfo.CapabilityVideoTiles];
 }
 
 /// <summary>Video / File 子連線狀態。</summary>
@@ -181,7 +184,8 @@ public static class ControllerClient
             reuseReadBuffer: role == ChannelKind.Video).ConfigureAwait(false);
         try
         {
-            await ExchangeHelloAsync(stream, role, ct).ConfigureAwait(false);
+            await ExchangeHelloAsync(stream, role, ct,
+                role == ChannelKind.Video ? options.VideoCapabilities : ClientCapabilities).ConfigureAwait(false);
             var (_, challenge) = await stream.ReadMessageAsync<SubConnectChallenge>(ct).ConfigureAwait(false);
             if (challenge.Nonce is null || challenge.Nonce.Length != ProtocolInfo.SubConnectNonceSize)
                 throw new ProtocolViolationException("SubConnectChallenge 內容不合法");
@@ -200,9 +204,9 @@ public static class ControllerClient
         }
     }
 
-    private static async Task ExchangeHelloAsync(FrameStream stream, ChannelKind role, CancellationToken ct)
+    private static async Task ExchangeHelloAsync(FrameStream stream, ChannelKind role, CancellationToken ct, string[]? capabilities = null)
     {
-        await stream.WriteAsync(new Hello(ProtocolInfo.Version, role, ClientCapabilities), cancellationToken: ct).ConfigureAwait(false);
+        await stream.WriteAsync(new Hello(ProtocolInfo.Version, role, capabilities ?? ClientCapabilities), cancellationToken: ct).ConfigureAwait(false);
         var (_, reply) = await stream.ReadMessageAsync<Hello>(ct).ConfigureAwait(false);
         if (reply.ProtocolVersion != ProtocolInfo.Version)
             throw new RemoteErrorException(ErrorCode.VersionMismatch,

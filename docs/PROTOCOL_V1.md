@@ -73,7 +73,7 @@
 | 11 | PauseControl | Control | H→C | 規劃中 |
 | 12 | ResumeControl | Control | 雙向 | 規劃中 |
 | 20–25 | KeyEvent、MouseMoveEvent、MouseButtonEvent、MouseWheelEvent、InputHeartbeat、ReleaseAllInput | Control | C→H | 規劃中（B1） |
-| 40 | VideoFrame | Video | H→C | 規劃中（A2） |
+| 40 | VideoFrame | Video | H→C | 已實作（A2a） |
 | 41 | CursorShape | Video | H→C | 規劃中（A3） |
 | 42 | KeyframeRequest | Video | C→H | 已實作 |
 | 43 | VideoTileUpdate | Video | H→C | 已實作（A1 PoC） |
@@ -129,6 +129,7 @@
 | SubConnectResult | Success、Error(AuthError) |
 | Heartbeat | Timestamp(long，送出方自用) |
 | KeyframeRequest | LastFrameId |
+| VideoFrame | FrameId、Width、Height（偶數）、IsKeyframe、ChunkIndex、ChunkCount（1～64）、Data（Annex B，每塊 ≤ 512 KB，一張 ≤ 16 MiB）、Codec（"h264"） |
 | VideoTileUpdate | FrameId、FrameWidth、FrameHeight、EndOfFrame、Tiles[]{X、Y、Width、Height、Data}、IsKeyframe（2026-11-12 加入，全部區塊時為 true） |
 
 AuthError：0 None、1 BadCredentials、2 TooManyAttempts、3 Busy、4 InvalidToken。
@@ -139,7 +140,7 @@ AuthError：0 None、1 BadCredentials、2 TooManyAttempts、3 Busy、4 InvalidTo
 - **Hello 的分幀與欄位 0、1 在所有未來版本保持不變**，讓不同版本至少能辨識彼此版本。
 - 被控端收到不同版本：回 `Error(VersionMismatch, "協定版本不相容…請更新兩端程式")` 後關閉。
 - 控制端收到不同版本的 Hello 回覆：中止並顯示「協定版本不相容，請更新兩端程式」。
-- Capabilities 目前兩端皆送空陣列；未來用來宣告選用功能（例如 `h264`），未知項目忽略。
+- Capabilities：Control 連線目前為空陣列；**Video 連線**控制端宣告 `video.h264`（能解 H.264 時）與 `video.tiles`，被控端據此選擇影像格式（D-050）。未知項目忽略。
 
 ## 7. 連線流程
 

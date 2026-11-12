@@ -22,7 +22,8 @@
 | `src/RemoteTool.Video` | net8.0 | A1 區塊差異編解碼、縮放、影像串流迴圈（不含擷取） | 已實作（待實機驗證） |
 | `src/RemoteTool.Host` | net8.0-windows | 被控端主程式；DXGI 擷取 | 已實作（DXGI 待實機驗證） |
 | `src/RemoteTool.Controller` | net8.0-windows（WPF） | 控制端：登入視窗、指紋對話框、遠端畫面視窗 | 已實作（WPF 待實機驗證） |
-| `src/RemoteTool.HostGuard` | net8.0-windows | 輸入注入與 Host 監看 | 規劃中（B1） |
+| `src/RemoteTool.Media` | net10.0-windows | Media Foundation H.264 編碼 / 解碼 | A2a 已實作（待實機驗證） |
+| `src/RemoteTool.HostGuard` | net10.0-windows | 輸入注入與 Host 監看 | 規劃中（B1） |
 
 跨平台專案可在 Linux / CI 用真實 TLS 測試（D-023）。
 
@@ -98,9 +99,20 @@ DXGI Desktop Duplication（主螢幕）
 - 控制端：背景執行緒解到 `FrameCanvas`，每張完成時累積變動範圍；UI 執行緒只把變動範圍寫入 `WriteableBitmap`（Bgr32，忽略 DXGI 不可靠的 alpha）。UI 跟不上時多張合併成一次更新，不排隊。
 - 已知限制：高 DPI 下「原尺寸」並非逐像素（點陣圖以 96 DPI 顯示），A3 處理。
 
-### 3.2 A2 正式路徑（規劃中）
+### 3.2 A2 路徑（A2a 已實作，待實機驗證；D-049～D-051）
 
-DXGI → H.264 硬體編碼（Media Foundation，軟體備援）→ `VideoFrame`（類型 40）→ 控制端硬體解碼 → D3D11 → HwndHost 顯示（D-013）。
+```
+被控端                                                         控制端
+DXGI → BGRA → (縮放) → 裁為偶數寬高 → BGRA→NV12（CPU）
+  → Media Foundation H.264 編碼（A2a：軟體 MFT；A2a-2：硬體優先）
+  → Annex B → VideoFrame 分塊（≤512 KB）──────────────────▶ 組裝（檢查順序、塊數、大小）
+                                                            → MF H.264 解碼（A2a：軟體）→ NV12→BGRA（CPU，裁掉對齊列）
+                                                            → FrameCanvas → WriteableBitmap（A2b 改 HwndHost + D3D11）
+```
+
+- 協商：控制端 Video Hello 宣告 `video.h264` / `video.tiles`；被控端擇一，編碼器故障時改送區塊差異（控制端兩者都能處理）。
+- 關鍵幀：第一張、解析度改變、重新整理、擷取恢復、子連線重連時強制關鍵幀（ICodecAPI ForceKeyFrame）；GOP 2 秒；關鍵幀前若無 SPS/PPS 則補上序列標頭。
+- 專案：`src/RemoteTool.Media`（net10.0-windows，Vortice.MediaFoundation），`MfH264Encoder` / `MfH264Decoder`；`ProcessOutput` 以 COM vtable 呼叫以明確掌握 sample 參考計數。
 
 ## 4. 輸入（規劃中，B1）
 

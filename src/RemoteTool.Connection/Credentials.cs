@@ -133,35 +133,104 @@ public static class PasswordHasher
     }
 }
 
+/// <summary>
+/// 被控端的帳號集合（PLAN §6：可建立一或多組帳號，PLAN_GAPS G-04）。帳號名稱區分大小寫、不可重複。
+/// </summary>
+public sealed class CredentialSet
+{
+    private readonly List<CredentialRecord> _accounts;
+
+    public CredentialSet(IEnumerable<CredentialRecord> accounts)
+    {
+        _accounts = accounts.ToList();
+        var duplicate = _accounts.GroupBy(a => a.Username, StringComparer.Ordinal).FirstOrDefault(g => g.Count() > 1);
+        if (duplicate is not null) throw new InvalidDataException($"帳號重複：{duplicate.Key}");
+    }
+
+    public static implicit operator CredentialSet(CredentialRecord single) => new([single]);
+
+    public IReadOnlyList<CredentialRecord> Accounts => _accounts;
+    public int Count => _accounts.Count;
+
+    public bool Contains(string username) => _accounts.Any(a => a.Username == username);
+
+    /// <summary>新增或取代同名帳號，回傳新的集合。</summary>
+    public CredentialSet With(CredentialRecord record)
+        => new(_accounts.Where(a => a.Username != record.Username).Append(record));
+
+    /// <summary>移除帳號，回傳新的集合。</summary>
+    public CredentialSet Without(string username) => new(_accounts.Where(a => a.Username != username));
+
+    /// <summary>
+    /// 驗證帳密。帳號不存在時仍以第一組帳號的參數完整計算一次雜湊（結果必為失敗），
+    /// 讓「帳號存在但密碼錯」與「帳號不存在」的回應時間相同，避免以時間猜帳號。
+    /// </summary>
+    public bool Verify(string username, string password, bool allowWeakParameters = false)
+    {
+        if (_accounts.Count == 0) return false;
+        var record = _accounts.FirstOrDefault(a => a.Username == username) ?? _accounts[0];
+        return PasswordHasher.Verify(record, username, password, allowWeakParameters);
+    }
+
+    public void Validate(bool allowWeak = false)
+    {
+        foreach (var a in _accounts) a.Validate(allowWeak);
+    }
+}
+
+/// <summary>帳密檔：<c>{ "Version": 1, "Accounts": [ ... ] }</c>，以 DPAPI（目前使用者）保護（G-03）。</summary>
 public static class CredentialStore
 {
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
 
-    /// <summary>
-    /// 讀取帳密檔；不存在回傳 null。舊格式拋出 <see cref="CredentialFormatException"/>，
-    /// 內容或參數不合法拋出 <see cref="InvalidDataException"/>。
-    /// </summary>
-    public static CredentialRecord? Load(string path)
+    private sealed class FileModel
     {
+        public int Version { get; set; } = 1;
+        public List<CredentialRecord> Accounts { get; set; } = new();
+    }
+
+    /// <summary>
+    /// 讀取帳密檔；不存在回傳 null。舊格式（PBKDF2）拋出 <see cref="CredentialFormatException"/>，
+    /// 內容、參數不合法或無法解密拋出 <see cref="InvalidDataException"/>。
+    /// 舊的單一帳號明文檔會自動轉為新格式並加密保存。
+    /// </summary>
+    public static CredentialSet? Load(string path, ISecretProtector? protector = null)
+    {
+        protector ??= SecretProtector.Default;
         if (!File.Exists(path)) return null;
-        CredentialRecord? record;
+
+        string json = SecretFile.ReadText(path, protector, out bool needsRewrite);
+        CredentialSet set;
         try
         {
-            record = JsonSerializer.Deserialize<CredentialRecord>(File.ReadAllText(path), JsonOptions);
+            var node = System.Text.Json.Nodes.JsonNode.Parse(json) as System.Text.Json.Nodes.JsonObject
+                       ?? throw new InvalidDataException("帳密檔為空");
+            if (node.ContainsKey("Accounts"))
+            {
+                var model = node.Deserialize<FileModel>(JsonOptions) ?? throw new InvalidDataException("帳密檔為空");
+                set = new CredentialSet(model.Accounts);
+            }
+            else
+            {
+                // G-04 之前的單一帳號格式
+                var single = node.Deserialize<CredentialRecord>(JsonOptions) ?? throw new InvalidDataException("帳密檔為空");
+                set = new CredentialSet([single]);
+                needsRewrite = true;
+            }
         }
         catch (JsonException ex)
         {
             throw new InvalidDataException("帳密檔格式錯誤", ex);
         }
-        if (record is null) throw new InvalidDataException("帳密檔為空");
-        record.Validate();
-        return record;
+
+        set.Validate();
+        if (needsRewrite) Save(path, set, protector);
+        return set;
     }
 
-    public static void Save(string path, CredentialRecord record)
+    public static void Save(string path, CredentialSet set, ISecretProtector? protector = null)
     {
-        string? dir = Path.GetDirectoryName(path);
-        if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
-        File.WriteAllText(path, JsonSerializer.Serialize(record, JsonOptions));
+        var model = new FileModel { Accounts = set.Accounts.ToList() };
+        SecretFile.WriteText(path, JsonSerializer.Serialize(model, JsonOptions), protector ?? SecretProtector.Default);
     }
 }

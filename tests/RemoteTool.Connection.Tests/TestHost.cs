@@ -24,7 +24,7 @@ internal sealed class TestHost : IAsyncDisposable
     public static readonly Argon2Parameters WeakArgon2 = new(MemoryKiB: 256, Iterations: 1, Parallelism: 1);
 
     public TestHost(LoginThrottle? throttle = null, TimeSpan? heartbeatTimeout = null, TimeSpan? handshakeTimeout = null,
-        int maxPendingPerAddress = 4, TimeSpan? tokenLifetime = null)
+        int maxPendingPerAddress = 4, TimeSpan? tokenLifetime = null, Func<SubChannelContext, Task>? subChannelHandler = null)
     {
         Server = new HostServer(new HostServerOptions
         {
@@ -32,6 +32,7 @@ internal sealed class TestHost : IAsyncDisposable
             Credentials = PasswordHasher.Create(User, Pass, WeakArgon2, allowWeakParameters: true),
             AllowWeakCredentialParameters = true,
             MaxPendingConnectionsPerAddress = maxPendingPerAddress,
+            SubChannelHandler = subChannelHandler,
             BindAddress = IPAddress.Loopback,
             Port = 0,
             HeartbeatTimeout = heartbeatTimeout ?? TimeSpan.FromSeconds(ProtocolInfo.HeartbeatTimeoutSeconds),
@@ -54,6 +55,7 @@ internal sealed class TestHost : IAsyncDisposable
         KnownHosts = known ?? new KnownHostsStore(null),
         ConfirmNewHost = confirm ?? ((_, _) => true),
         HeartbeatInterval = TimeSpan.FromMilliseconds(100),
+        SubChannelReconnectInitialDelay = TimeSpan.FromMilliseconds(100),
     };
 
     /// <summary>

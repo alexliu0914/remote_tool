@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
+using System.Security.Cryptography.X509Certificates;
 using RemoteTool.Connection;
 using RemoteTool.Host;
 using RemoteTool.Protocol;
@@ -30,8 +31,16 @@ static class HostProgram
                 PrintHelp();
                 return 0;
             }
-            if (args.Contains("--setup"))
+            if (args.Contains("--setup") || args.Contains("--add-user"))
                 return Setup();
+            if (args.Contains("--list-users"))
+                return ListUsers();
+            int ri = Array.IndexOf(args, "--remove-user");
+            if (ri >= 0)
+            {
+                if (ri + 1 >= args.Length) throw new ArgumentException("--remove-user 後面要接帳號");
+                return RemoveUser(args[ri + 1]);
+            }
             if (args.Contains("--fingerprint"))
             {
                 using var cert = HostCertificate.LoadOrCreate(AppPaths.HostCertificateFile);
@@ -45,7 +54,10 @@ static class HostProgram
                 MaxWidth = ParseIntOption(args, "--max-width", 1920, 320, 8192),
                 Log = Log,
             };
-            return await ServeAsync(ConsoleInput.ParsePort(args, ProtocolInfo.DefaultPort), video, args.Contains("--memlog"));
+            var drops = new TestDrops(
+                ParseIntOption(args, "--test-drop-video", 0, 5, 3600),
+                ParseIntOption(args, "--test-drop-file", 0, 5, 3600));
+            return await ServeAsync(ConsoleInput.ParsePort(args, ProtocolInfo.DefaultPort), video, args.Contains("--memlog"), drops);
         }
         catch (ArgumentException ex)
         {
@@ -61,7 +73,9 @@ static class HostProgram
             RemoteTool Host（被控端）
 
             用法：
-              Host.exe --setup          設定（或重設）登入帳號與密碼
+              Host.exe --setup          新增帳號，或變更既有帳號的密碼（可建立多組帳號）
+              Host.exe --list-users     列出帳號
+              Host.exe --remove-user <帳號>  刪除帳號
               Host.exe                  啟動被控端，等待控制端連線（預設埠 52100）
               Host.exe --port <埠>      以指定埠啟動
               Host.exe --fingerprint    顯示本機主機指紋
@@ -72,19 +86,50 @@ static class HostProgram
 
             診斷：
               --memlog                  每 60 秒顯示記憶體用量（工作集、受控堆積、GC 次數）
+
+            測試專用（NET-03 子連線重連，正式使用請勿加）：
+              --test-drop-video <秒>    每條 Video 連線建立後經過指定秒數即由被控端關閉
+              --test-drop-file <秒>     每條 File 連線建立後經過指定秒數即由被控端關閉
             """);
         Console.WriteLine($"資料位置：{AppPaths.DataDirectory}");
     }
 
+    /// <summary>讀取帳號集合；檔案不存在回傳空集合，格式問題印出訊息並回傳 null。</summary>
+    private static CredentialSet? LoadAccountsForEdit()
+    {
+        try
+        {
+            return CredentialStore.Load(AppPaths.HostCredentialsFile) ?? new CredentialSet([]);
+        }
+        catch (CredentialFormatException)
+        {
+            Console.WriteLine("現有帳密檔為舊格式（PBKDF2），將以新帳號取代。");
+            return new CredentialSet([]);
+        }
+        catch (InvalidDataException ex)
+        {
+            Console.Error.WriteLine($"帳密檔無法讀取（{ex.Message}）。");
+            Console.Error.WriteLine($"若要重新開始，請刪除 {AppPaths.HostCredentialsFile} 後再執行 --setup。");
+            return null;
+        }
+    }
+
     private static int Setup()
     {
-        Console.WriteLine("設定被控端登入帳號密碼（控制端連線時要輸入這組）。");
+        var accounts = LoadAccountsForEdit();
+        if (accounts is null) return 1;
+
+        Console.WriteLine("新增帳號或變更密碼（控制端連線時輸入這組帳密）。");
+        if (accounts.Count > 0)
+            Console.WriteLine($"目前帳號：{string.Join("、", accounts.Accounts.Select(a => a.Username))}");
         string user = ConsoleInput.Prompt("帳號：");
         if (user.Length == 0 || user.Length > ProtocolInfo.MaxUsernameLength)
         {
             Console.Error.WriteLine("帳號不可空白，且不可超過 256 字。");
             return 1;
         }
+        if (accounts.Contains(user) && !ConsoleInput.Confirm($"帳號「{user}」已存在，要變更它的密碼嗎？(y/N)："))
+            return 0;
 
         string pass = ConsoleInput.PromptSecret($"密碼（至少 {PasswordHasher.MinPasswordLength} 字）：");
         if (pass.Length < PasswordHasher.MinPasswordLength || pass.Length > ProtocolInfo.MaxPasswordLength)
@@ -101,9 +146,40 @@ static class HostProgram
         var sw = System.Diagnostics.Stopwatch.StartNew();
         var record = PasswordHasher.Create(user, pass);
         sw.Stop();
-        CredentialStore.Save(AppPaths.HostCredentialsFile, record);
-        Console.WriteLine($"已儲存（Argon2id，只存雜湊與隨機鹽，不存明文）：{AppPaths.HostCredentialsFile}");
+        accounts = accounts.With(record);
+        CredentialStore.Save(AppPaths.HostCredentialsFile, accounts);
+        Console.WriteLine($"已儲存帳號「{user}」（Argon2id，只存雜湊與隨機鹽；檔案以 {SecretProtector.Default.Name} 保護）：{AppPaths.HostCredentialsFile}");
         Console.WriteLine($"雜湊參數：記憶體 {record.MemoryKiB} KiB、次數 {record.Iterations}、平行度 {record.Parallelism}；本機耗時 {sw.ElapsedMilliseconds} ms");
+        Console.WriteLine($"目前共 {accounts.Count} 組帳號。");
+        return 0;
+    }
+
+    private static int ListUsers()
+    {
+        var accounts = LoadAccountsForEdit();
+        if (accounts is null) return 1;
+        if (accounts.Count == 0)
+        {
+            Console.WriteLine("尚未設定任何帳號，請執行 Host.exe --setup。");
+            return 0;
+        }
+        foreach (var a in accounts.Accounts) Console.WriteLine(a.Username);
+        return 0;
+    }
+
+    private static int RemoveUser(string user)
+    {
+        var accounts = LoadAccountsForEdit();
+        if (accounts is null) return 1;
+        if (!accounts.Contains(user))
+        {
+            Console.Error.WriteLine($"沒有帳號「{user}」。");
+            return 1;
+        }
+        if (!ConsoleInput.Confirm($"確定刪除帳號「{user}」？(y/N)：")) return 0;
+        accounts = accounts.Without(user);
+        CredentialStore.Save(AppPaths.HostCredentialsFile, accounts);
+        Console.WriteLine($"已刪除。剩餘 {accounts.Count} 組帳號" + (accounts.Count == 0 ? "（Host 需至少一組帳號才能啟動）。" : "。"));
         return 0;
     }
 
@@ -135,9 +211,29 @@ static class HostProgram
         await VideoStreamer.RunAsync(capture, ctx.Stream, ctx.Incoming, options, ctx.Token);
     }
 
-    private static async Task<int> ServeAsync(int port, VideoStreamerOptions video, bool memlog)
+    /// <summary>測試用：子連線建立後經過指定秒數就關閉（0 = 不關閉）。</summary>
+    private sealed record TestDrops(int VideoSeconds, int FileSeconds);
+
+    private static async Task HandleSubChannelAsync(SubChannelContext ctx, VideoStreamerOptions video, TestDrops drops)
     {
-        CredentialRecord? credentials;
+        int seconds = ctx.Channel == ChannelKind.Video ? drops.VideoSeconds : drops.FileSeconds;
+        using var dropCts = CancellationTokenSource.CreateLinkedTokenSource(ctx.Token);
+        if (seconds > 0) dropCts.CancelAfter(TimeSpan.FromSeconds(seconds));
+        var scoped = new SubChannelContext(ctx.Channel, ctx.Stream, ctx.Incoming, ctx.Remote, dropCts.Token);
+        try
+        {
+            if (ctx.Channel == ChannelKind.Video) await RunVideoAsync(scoped, video);
+            else await Task.Delay(Timeout.Infinite, dropCts.Token); // File 通道於檔案傳輸階段實作
+        }
+        catch (OperationCanceledException) when (seconds > 0 && !ctx.Token.IsCancellationRequested)
+        {
+            Log($"[測試] 依 --test-drop 設定關閉 {ctx.Channel} 子連線");
+        }
+    }
+
+    private static async Task<int> ServeAsync(int port, VideoStreamerOptions video, bool memlog, TestDrops drops)
+    {
+        CredentialSet? credentials;
         try
         {
             credentials = CredentialStore.Load(AppPaths.HostCredentialsFile);
@@ -152,13 +248,23 @@ static class HostProgram
             Console.Error.WriteLine($"帳密檔內容不合法（{ex.Message}），請重新執行 Host.exe --setup。");
             return 1;
         }
-        if (credentials is null)
+        if (credentials is null || credentials.Count == 0)
         {
             Console.Error.WriteLine("尚未設定帳號密碼，請先執行：Host.exe --setup");
             return 1;
         }
 
-        using var cert = HostCertificate.LoadOrCreate(AppPaths.HostCertificateFile);
+        X509Certificate2 cert;
+        try
+        {
+            cert = HostCertificate.LoadOrCreate(AppPaths.HostCertificateFile);
+        }
+        catch (InvalidDataException ex)
+        {
+            Console.Error.WriteLine($"主機金鑰無法讀取（{ex.Message}）");
+            return 1;
+        }
+        using var _cert = cert;
 
         await using var server = new HostServer(new HostServerOptions
         {
@@ -166,9 +272,7 @@ static class HostProgram
             Credentials = credentials,
             Port = port,
             Log = Log,
-            SubChannelHandler = ctx => ctx.Channel == ChannelKind.Video
-                ? RunVideoAsync(ctx, video)
-                : Task.Delay(Timeout.Infinite, ctx.Token), // File 通道於檔案傳輸階段實作
+            SubChannelHandler = ctx => HandleSubChannelAsync(ctx, video, drops),
         });
 
         try
@@ -183,9 +287,12 @@ static class HostProgram
 
         Console.WriteLine();
         Console.WriteLine("RemoteTool Host（被控端）已啟動");
-        Console.WriteLine($"  帳號：{credentials.Username}");
+        Console.WriteLine($"  帳號：{string.Join("、", credentials.Accounts.Select(a => a.Username))}");
+        Console.WriteLine($"  金鑰與設定保護：{SecretProtector.Default.Name}");
         Console.WriteLine($"  埠：  {server.Port}");
         Console.WriteLine($"  畫面：上限 {video.MaxFps} FPS、寬 {video.MaxWidth}（A1 PoC）");
+        if (drops.VideoSeconds > 0 || drops.FileSeconds > 0)
+            Console.WriteLine($"  [測試模式] 子連線定時關閉：Video {drops.VideoSeconds} 秒、File {drops.FileSeconds} 秒");
         Console.WriteLine("  本機 IP（控制端連這個）：");
         foreach (var ip in LocalIPv4Addresses())
             Console.WriteLine($"    {ip}");

@@ -85,7 +85,8 @@ public class ConnectionTests
             host.Options(known: known, confirm: (_, fp) => { shown = fp; return false; })));
 
         Assert.Equal(host.Server.Fingerprint, shown);
-        Assert.Null(known.Get(KnownHostsStore.KeyFor("127.0.0.1", host.Server.Port)));
+        Assert.Null(known.HintFor(KnownHostsStore.KeyFor("127.0.0.1", host.Server.Port)));
+        Assert.False(known.IsTrusted(shown!));
         await Task.Delay(200);
         Assert.Equal(0, host.Server.LoginAttempts);
     }
@@ -103,7 +104,8 @@ public class ConnectionTests
         await using (await ControllerClient.ConnectAsync(host.Options(known: known, confirm: confirm))) { }
 
         Assert.Equal(1, asked);
-        Assert.Equal(host.Server.Fingerprint, known.Get(KnownHostsStore.KeyFor("127.0.0.1", host.Server.Port)));
+        Assert.Equal(host.Server.Fingerprint, known.HintFor(KnownHostsStore.KeyFor("127.0.0.1", host.Server.Port)));
+        Assert.True(known.IsTrusted(host.Server.Fingerprint));
     }
 
     [Fact]
@@ -154,7 +156,7 @@ public class ConnectionTests
         var known = new KnownHostsStore(null);
         string fp = await ControllerClient.ProbeFingerprintAsync("127.0.0.1", host.Server.Port);
         await Task.Delay(1000); // 使用者慢慢核對，超過被控端握手時限
-        known.Set(KnownHostsStore.KeyFor("127.0.0.1", host.Server.Port), fp);
+        known.Trust(KnownHostsStore.KeyFor("127.0.0.1", host.Server.Port), fp);
 
         bool asked = false;
         await using var session = await ControllerClient.ConnectAsync(host.Options(known: known, confirm: (_, _) => asked = true));
@@ -169,7 +171,7 @@ public class ConnectionTests
         var known = new KnownHostsStore(null);
         string key = KnownHostsStore.KeyFor("127.0.0.1", host.Server.Port);
         string bogus = string.Join(':', Enumerable.Repeat("00", 32));
-        known.Set(key, bogus);
+        known.Trust(key, bogus); // 此位址上次是另一把（已信任的）金鑰
         bool asked = false;
 
         var ex = await Assert.ThrowsAsync<FingerprintMismatchException>(() => ControllerClient.ConnectAsync(
@@ -178,9 +180,41 @@ public class ConnectionTests
         Assert.Equal(bogus, ex.Expected);
         Assert.Equal(host.Server.Fingerprint, ex.Actual);
         Assert.False(asked);
-        Assert.Equal(bogus, known.Get(key)); // 不可自動覆寫
+        Assert.Equal(bogus, known.HintFor(key)); // 不可自動覆寫
+        Assert.False(known.IsTrusted(host.Server.Fingerprint));
         await Task.Delay(200);
         Assert.Equal(0, host.Server.LoginAttempts);
+    }
+
+    // ---------------------------------------------------------------- 以公鑰識別主機（G-06）
+
+    [Fact]
+    public async Task TrustedKey_AtNewAddress_IsAcceptedWithoutPrompt()
+    {
+        await using var host = new TestHost();
+        var known = new KnownHostsStore(null);
+        known.Trust("192.168.1.20:52100", host.Server.Fingerprint); // 之前在別的 IP 信任過這台
+        bool asked = false;
+        await using var session = await ControllerClient.ConnectAsync(host.Options(known: known, confirm: (_, _) => asked = true));
+        Assert.False(asked);
+        Assert.Equal(host.Server.Fingerprint, known.HintFor(KnownHostsStore.KeyFor("127.0.0.1", host.Server.Port)));
+    }
+
+    [Fact]
+    public async Task NewUntrustedKey_AtKnownAddress_IsRejected_EvenIfAnotherAddressTrustedIt()
+    {
+        await using var host = new TestHost();
+        var known = new KnownHostsStore(null);
+        string key = KnownHostsStore.KeyFor("127.0.0.1", host.Server.Port);
+        string otherHost = string.Join(':', Enumerable.Repeat("AB", 32));
+        known.Trust(key, otherHost);
+        await Assert.ThrowsAsync<FingerprintMismatchException>(() => ControllerClient.ConnectAsync(host.Options(known: known)));
+
+        // 移除此位址的紀錄後，重新詢問
+        Assert.True(known.Forget(key));
+        bool asked = false;
+        await using var session = await ControllerClient.ConnectAsync(host.Options(known: known, confirm: (_, _) => asked = true));
+        Assert.True(asked);
     }
 
     [Fact]
@@ -353,6 +387,81 @@ public class ConnectionTests
         Assert.True(r.Success);
         Assert.NotEqual(videoToken, mac);
         Assert.Equal(32, nonce.Length);
+    }
+
+    // ---------------------------------------------------------------- 子連線獨立重連（NET-03、PLAN §7）
+
+    /// <summary>第 n 條指定角色的子連線：前幾條立即結束（模擬中斷），之後保持。</summary>
+    private static Func<SubChannelContext, Task> DropFirst(ChannelKind role, int drops, Action? onConnected = null)
+    {
+        int count = 0;
+        return ctx =>
+        {
+            if (ctx.Channel != role) return Task.Delay(Timeout.Infinite, ctx.Token);
+            onConnected?.Invoke();
+            return Interlocked.Increment(ref count) <= drops
+                ? Task.Delay(300, ctx.Token)                 // handler 結束 → 被控端關閉此子連線（稍候，讓測試先訂閱事件）
+                : Task.Delay(Timeout.Infinite, ctx.Token);
+        };
+    }
+
+    [Theory]
+    [InlineData(ChannelKind.Video)]
+    [InlineData(ChannelKind.File)]
+    public async Task SubChannelDrop_Reconnects_WithoutEndingSession(ChannelKind role)
+    {
+        int connections = 0;
+        await using var host = new TestHost(subChannelHandler: DropFirst(role, drops: 1, () => Interlocked.Increment(ref connections)));
+        await using var session = await ControllerClient.ConnectAsync(host.Options());
+        var states = new List<SubChannelState>();
+        session.SubChannelStateChanged += (r, st, _) => { if (r == role) lock (states) states.Add(st); };
+
+        await TestHost.WaitUntilAsync(() => session.ReconnectCount >= 1);
+        Assert.Equal(SubChannelState.Connected, session.GetState(role));
+        Assert.False(session.Completion.IsCompleted);   // Control 保持、遠端桌面不關閉
+        Assert.True(host.Server.HasActiveSession);
+        Assert.Equal(2, Volatile.Read(ref connections));
+        lock (states) Assert.Equal(new[] { SubChannelState.Reconnecting, SubChannelState.Connected }, states);
+        await TestHost.WaitUntilAsync(() => host.Logs.Any(l => l.Contains($"重新發出 {role} token")));
+    }
+
+    [Fact]
+    public async Task SubChannelReconnect_FailsAfterWindow_ThenManualRetrySucceeds()
+    {
+        await using var host = new TestHost(subChannelHandler: DropFirst(ChannelKind.Video, drops: 1));
+        var options = host.Options();
+        options = new ControllerConnectOptions
+        {
+            Host = options.Host, Port = options.Port, Username = options.Username, Password = options.Password,
+            KnownHosts = options.KnownHosts, ConfirmNewHost = options.ConfirmNewHost,
+            HeartbeatInterval = options.HeartbeatInterval,
+            SubChannelReconnectInitialDelay = TimeSpan.FromMilliseconds(100),
+            SubChannelReconnectWindow = TimeSpan.FromMilliseconds(800),
+        };
+        host.Server.SetAcceptPaused(true); // 之後的新連線都被拒，重連會失敗
+        // 先讓 Control / 子連線建立：暫停前需要先連上
+        host.Server.SetAcceptPaused(false);
+        var connected = ControllerClient.ConnectAsync(options);
+        await using var session = await connected;
+        host.Server.SetAcceptPaused(true);
+
+        await TestHost.WaitUntilAsync(() => session.GetState(ChannelKind.Video) == SubChannelState.Failed);
+        Assert.False(session.Completion.IsCompleted); // 失敗也不關閉遠端桌面
+
+        host.Server.SetAcceptPaused(false);
+        session.RetrySubChannel(ChannelKind.Video);
+        await TestHost.WaitUntilAsync(() => session.GetState(ChannelKind.Video) == SubChannelState.Connected);
+        Assert.Equal(1, session.ReconnectCount);
+    }
+
+    [Fact]
+    public async Task ControlDrop_StillEndsWholeSession()
+    {
+        var host = new TestHost();
+        await using var session = await ControllerClient.ConnectAsync(host.Options());
+        await host.DisposeAsync();
+        var finished = await Task.WhenAny(session.Completion, Task.Delay(10_000));
+        Assert.Same(session.Completion, finished);
     }
 
     // ---------------------------------------------------------------- 心跳與協定錯誤

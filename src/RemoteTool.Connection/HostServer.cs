@@ -12,7 +12,8 @@ namespace RemoteTool.Connection;
 public sealed class HostServerOptions
 {
     public required X509Certificate2 Certificate { get; init; }
-    public required CredentialRecord Credentials { get; init; }
+    /// <summary>可登入的帳號（一或多組，PLAN §6）。</summary>
+    public required CredentialSet Credentials { get; init; }
     public IPAddress BindAddress { get; init; } = IPAddress.Any;
     /// <summary>0 表示由系統挑選（測試用）。</summary>
     public int Port { get; init; } = ProtocolInfo.DefaultPort;
@@ -79,6 +80,10 @@ public sealed class HostServer : IAsyncDisposable
     private Task? _acceptLoop;
     private int _loginAttempts;
     private int _pendingTotal;
+    private bool _acceptPaused;
+
+    /// <summary>測試用：暫時拒絕所有新連線（已建立的連線不受影響），模擬子連線無法重連。</summary>
+    internal void SetAcceptPaused(bool paused) => Volatile.Write(ref _acceptPaused, paused);
 
     public HostServer(HostServerOptions options)
     {
@@ -141,6 +146,11 @@ public sealed class HostServer : IAsyncDisposable
                 continue;
             }
 
+            if (Volatile.Read(ref _acceptPaused))
+            {
+                client.Dispose();
+                continue;
+            }
             var address = Normalize(((IPEndPoint)client.Client.RemoteEndPoint!).Address);
             if (!TryAddPending(address))
             {
@@ -333,7 +343,8 @@ public sealed class HostServer : IAsyncDisposable
             await stream.WriteAsync(new LoginResult(true, AuthError.None, 0), loginFrame.RequestId, handshakeToken).ConfigureAwait(false);
             foreach (var role in SubChannels)
                 await GrantTokenAsync(session, role, 0, handshakeToken).ConfigureAwait(false);
-            Log($"{remote}：登入成功，工作階段開始（Windows 工作階段 {session.WindowsSessionId}）");
+            // 稽核：成功時記錄帳號（PLAN §6）；失敗時不記錄輸入的帳號
+            Log($"{remote}：帳號 {session.Username} 登入成功，工作階段開始（Windows 工作階段 {session.WindowsSessionId}）");
 
             await RunControlLoopAsync(stream, session).ConfigureAwait(false);
         }
@@ -373,7 +384,7 @@ public sealed class HostServer : IAsyncDisposable
             return (AuthError.TooManyAttempts, TimeSpan.FromSeconds(1));
         try
         {
-            bool ok = await Task.Run(() => PasswordHasher.Verify(_options.Credentials, login.Username, login.Password,
+            bool ok = await Task.Run(() => _options.Credentials.Verify(login.Username, login.Password,
                 _options.AllowWeakCredentialParameters), ct).ConfigureAwait(false);
             return (ok ? AuthError.None : AuthError.BadCredentials, TimeSpan.Zero);
         }

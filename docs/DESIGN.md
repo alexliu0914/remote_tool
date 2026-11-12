@@ -62,9 +62,17 @@ Control 結束 → 撤銷工作階段：作廢 token、關閉 Video / File（D-0
 - 被控端：`HostServerOptions.SubChannelHandler` 在子連線驗證成功後被呼叫，取得可寫入的 `FrameStream` 與對方送來封包的佇列；連線結束時取消。
 - 控制端：`ControllerConnectOptions.VideoFrameReceived` 在收到 Video 封包時被呼叫。
 
-### 2.4 本機資料（D-017）
+### 2.4 本機資料（D-017、D-046）
 
-`%LOCALAPPDATA%\RemoteTool`（可用環境變數 `REMOTETOOL_HOME` 覆寫）：`host-cert.pfx`、`host-credentials.json`（僅雜湊）、`known-hosts.json`。
+`%LOCALAPPDATA%\RemoteTool`（可用環境變數 `REMOTETOOL_HOME` 覆寫）：`host-cert.pfx`、`host-credentials.json`（多組帳號，僅 Argon2id 雜湊）、`known-hosts.json`（已信任公鑰與位址提示）——三者以 DPAPI（目前使用者）加密；`controller-settings.json`、`controller.log` 不含秘密。
+
+### 2.5 主機信任（D-045）
+
+以公鑰識別主機：已信任公鑰在任何位址都信任；同位址出現未信任的新金鑰即拒絕；陌生位址＋陌生金鑰則請使用者核對。
+
+### 2.6 子連線重連（D-047）
+
+Video / File 中斷時 Control 保持；控制端以 SessionTokenRequest 取得新 token 重連（退避 1、2、4…秒，30 秒為限，之後可手動重試）。Control 中斷才結束工作階段。
 
 ## 3. 遠端畫面
 

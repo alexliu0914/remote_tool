@@ -6,6 +6,7 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using RemoteTool.Connection;
+using RemoteTool.Protocol;
 using RemoteTool.Video;
 
 namespace RemoteTool.Controller;
@@ -53,8 +54,41 @@ public partial class RemoteWindow : Window
                     OnFrameCompleted(new PixelRect(0, 0, _canvas.Buffer.Width, _canvas.Buffer.Height));
             }
         };
+        _session.SubChannelStateChanged += (role, state, detail) =>
+            Dispatcher.BeginInvoke(() => OnSubChannelState(role, state, detail));
         _ = WatchSessionAsync();
     }
+
+    private string _fileNote = "";
+
+    private void OnSubChannelState(ChannelKind role, SubChannelState state, string? detail)
+    {
+        DiagnosticLog.Write($"{role} 子連線：{state}{(detail is null ? "" : "（" + detail + "）")}");
+        if (role == ChannelKind.Video)
+        {
+            VideoOverlay.Visibility = state == SubChannelState.Connected ? Visibility.Collapsed : Visibility.Visible;
+            VideoRetryButton.Visibility = state == SubChannelState.Failed ? Visibility.Visible : Visibility.Collapsed;
+            VideoOverlayText.Text = state switch
+            {
+                SubChannelState.Reconnecting => "畫面重新連線中…\n（目前顯示的是最後一張畫面，非即時）",
+                SubChannelState.Failed => $"畫面連線失敗：{detail}\n控制連線仍在，可按下方按鈕重試。",
+                _ => "",
+            };
+        }
+        else
+        {
+            _fileNote = state switch
+            {
+                SubChannelState.Reconnecting => "檔案連線重新連線中…",
+                SubChannelState.Failed => "檔案連線失敗",
+                _ => "",
+            };
+            if (state == SubChannelState.Failed) _session.RetrySubChannel(ChannelKind.File); // 檔案連線自動再試
+        }
+        UpdateStatus();
+    }
+
+    private void OnRetryVideo(object sender, RoutedEventArgs e) => _session.RetrySubChannel(ChannelKind.Video);
 
     private async Task WatchSessionAsync()
     {
@@ -141,7 +175,12 @@ public partial class RemoteWindow : Window
     }
 
     private void UpdateStatus()
-        => StatusText.Text = _note.Length == 0 ? _stats : $"{_stats}    ｜ {_note}";
+    {
+        var parts = new List<string> { _stats };
+        if (_note.Length > 0) parts.Add(_note);
+        if (_fileNote.Length > 0) parts.Add(_fileNote);
+        StatusText.Text = string.Join("    ｜ ", parts);
+    }
 
     private void ApplyFit()
     {

@@ -18,6 +18,8 @@
   <ItemGroup>
     <!-- Argon2id 密碼雜湊（PLAN §6、PLAN_GAPS G-02）。評估紀錄見 docs/DECISIONS.md D-037 -->
     <PackageReference Include="Konscious.Security.Cryptography.Argon2" Version="1.3.1" />
+    <!-- DPAPI（目前使用者）保護金鑰與設定檔（PLAN §4、§6，PLAN_GAPS G-03）；只在 Windows 使用 -->
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="10.0.15" />
   </ItemGroup>
 
   <ItemGroup>

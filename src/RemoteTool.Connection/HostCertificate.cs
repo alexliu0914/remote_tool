@@ -4,22 +4,26 @@ using System.Security.Cryptography.X509Certificates;
 namespace RemoteTool.Connection;
 
 /// <summary>
-/// 被控端自簽憑證（ECDSA P-256）。第一次啟動時產生並存成 PFX，之後沿用，指紋因此固定。
+/// 被控端自簽憑證（ECDSA P-256）。第一次啟動時產生並存成受 DPAPI 保護的 PFX，之後沿用，指紋因此固定。
 /// 控制端不檢查憑證鏈與到期日，只比對 SPKI 指紋。
 /// </summary>
 public static class HostCertificate
 {
-    public static X509Certificate2 LoadOrCreate(string path)
+    /// <summary>
+    /// 載入或建立被控端憑證。私鑰檔以 DPAPI（目前使用者）保護（G-03）；
+    /// 舊版明文 PFX 會在載入後改存為受保護格式，金鑰不變，因此指紋不變。
+    /// </summary>
+    public static X509Certificate2 LoadOrCreate(string path, ISecretProtector? protector = null)
     {
+        protector ??= SecretProtector.Default;
         if (!File.Exists(path))
-        {
-            byte[] pfx = CreatePfx();
-            string? dir = Path.GetDirectoryName(path);
-            if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
-            File.WriteAllBytes(path, pfx);
-        }
+            SecretFile.WriteBytes(path, CreatePfx(), protector);
 
-        return Load(File.ReadAllBytes(path));
+        byte[] pfx = SecretFile.ReadBytes(path, protector, out bool needsRewrite);
+        var cert = Load(pfx);
+        if (needsRewrite) SecretFile.WriteBytes(path, pfx, protector);
+        CryptographicOperations.ZeroMemory(pfx);
+        return cert;
     }
 
     /// <summary>只在記憶體中產生（測試用）。</summary>

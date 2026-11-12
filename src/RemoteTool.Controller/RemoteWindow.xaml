@@ -19,10 +19,22 @@
             </StatusBarItem>
         </StatusBar>
 
-        <ScrollViewer x:Name="Scroller" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Disabled"
-                      Background="Black">
-            <Image x:Name="ScreenImage" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality"
-                   HorizontalAlignment="Center" VerticalAlignment="Center" />
-        </ScrollViewer>
+        <Grid>
+            <ScrollViewer x:Name="Scroller" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Disabled"
+                          Background="Black">
+                <Image x:Name="ScreenImage" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality"
+                       HorizontalAlignment="Center" VerticalAlignment="Center" />
+            </ScrollViewer>
+
+            <!-- Video 重連中 / 失敗：把最後一張畫面變暗並標示非即時（PLAN §3、§7） -->
+            <Border x:Name="VideoOverlay" Background="#B0000000" Visibility="Collapsed">
+                <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+                    <TextBlock x:Name="VideoOverlayText" Foreground="White" FontSize="20" TextAlignment="Center"
+                               TextWrapping="Wrap" MaxWidth="600" />
+                    <Button x:Name="VideoRetryButton" Content="重試畫面連線" Margin="0,16,0,0" HorizontalAlignment="Center"
+                            Visibility="Collapsed" Click="OnRetryVideo" />
+                </StackPanel>
+            </Border>
+        </Grid>
     </DockPanel>
 </Window>

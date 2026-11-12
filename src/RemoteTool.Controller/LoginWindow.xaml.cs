@@ -56,7 +56,7 @@ public partial class LoginWindow : Window
         if (!TryReadTarget(out string host, out int port)) return;
         string key = KnownHostsStore.KeyFor(host, port);
         var store = new KnownHostsStore(AppPaths.KnownHostsFile);
-        if (store.Get(key) is null)
+        if (store.HintFor(key) is null)
         {
             ShowStatus($"沒有 {key} 的指紋記錄。", error: false);
             return;
@@ -65,8 +65,8 @@ public partial class LoginWindow : Window
             $"確定要移除 {key} 的指紋記錄？\n\n只有在確認被控端自己換了憑證（例如刪除資料夾、重灌）時才這麼做。",
             "移除指紋記錄", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No);
         if (answer != MessageBoxResult.Yes) return;
-        store.Remove(key);
-        ShowStatus($"已移除 {key} 的指紋記錄。下次連線會重新核對指紋。", error: false);
+        store.Forget(key);
+        ShowStatus($"已移除 {key} 的主機公鑰信任記錄。下次連線會重新核對指紋。", error: false);
     }
 
     private async void OnConnect(object sender, RoutedEventArgs e)
@@ -92,15 +92,22 @@ public partial class LoginWindow : Window
             var knownHosts = new KnownHostsStore(AppPaths.KnownHostsFile);
             string hostKey = KnownHostsStore.KeyFor(host, port);
 
-            // 首次連線：先只取得指紋並關閉連線，再請使用者核對。
-            // 核對期間沒有任何進行中的連線或計時器，使用者可以慢慢比對（R-13）。
-            if (knownHosts.Get(hostKey) is null)
+            // 此位址第一次連：先只取得指紋並關閉連線。公鑰已信任（例如同一台電腦換了 IP，G-06）就直接繼續；
+            // 否則請使用者核對。核對期間沒有任何進行中的連線或計時器，使用者可以慢慢比對（R-13）。
+            if (knownHosts.HintFor(hostKey) is null)
             {
                 string fingerprint = await ControllerClient.ProbeFingerprintAsync(host, port);
-                if (!FingerprintDialog.ConfirmNewHost(this, hostKey, fingerprint))
-                    throw new FingerprintRejectedException(hostKey, fingerprint);
-                knownHosts.Set(hostKey, fingerprint);
-                DiagnosticLog.Write($"已信任 {hostKey} 的指紋");
+                if (!knownHosts.IsTrusted(fingerprint))
+                {
+                    if (!FingerprintDialog.ConfirmNewHost(this, hostKey, fingerprint))
+                        throw new FingerprintRejectedException(hostKey, fingerprint);
+                    DiagnosticLog.Write($"已信任 {hostKey} 的主機公鑰");
+                }
+                else
+                {
+                    DiagnosticLog.Write($"{hostKey} 的主機公鑰已信任（位址變更）");
+                }
+                knownHosts.Trust(hostKey, fingerprint);
                 ShowStatus($"登入 {host}:{port} …", error: false);
             }
 

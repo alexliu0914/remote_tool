@@ -7,7 +7,7 @@
 
 | Gate | 狀態 | 已驗證 | 尚缺 |
 | --- | --- | --- | --- |
-| G0-01 | **PARTIAL_PASS** | 單機（127.0.0.1）Windows 11：TLS 1.3、首次指紋核對、指紋變更中止、Argon2id 帳密登入、漸進延遲節流、三條連線與 nonce + HMAC token、Busy、斷線偵測（T-003、T-005、T-007、T-013、**T-014 規劃書對齊後回歸 R-01～R-16 全部通過**）；Protocol V1 自動測試通過（T-010） | ① ~~單機回歸~~（T-014 已完成）② **兩台實體 Win11**（TESTING.md 第五節）③ 規劃書另要求 **Video、File 中斷後獨立重連**（NET-03，尚未實作；目前任一條中斷即結束工作階段）。未完成前不得標 PASS |
+| G0-01 | **PARTIAL_PASS** | 單機（127.0.0.1）Windows 11：TLS 1.3、首次指紋核對、指紋變更中止、Argon2id 帳密登入、漸進延遲節流、三條連線與 nonce + HMAC token、Busy、斷線偵測（T-003、T-005、T-007、T-013、**T-014 規劃書對齊後回歸 R-01～R-16 全部通過**）；Protocol V1 自動測試通過（T-010） | ① ~~單機回歸~~（T-014 已完成）② **兩台實體 Win11**（TESTING.md 第五節）③ **Video、File 中斷後獨立重連**：已實作並通過自動測試（T-021），待實機 R-21、R-22 與雙機 D-05。未完成前不得標 PASS |
 | G0-02 | IN_PROGRESS | A1 單機實機驗證完成（T-015、T-016、T-020）：DXGI 擷取、區塊差異傳輸、WPF 顯示、縮放、重新整理、解析度切換、鎖定與 UAC 恢復、FPS 上限、記憶體持平；V-11（2K / 4K 縮小）未測（無設備） | H.264（A2）；鍵鼠（B1）；兩台實體 Win11 |
 | G0-03 | NOT_STARTED | — | 全部 |
 | G0-04 | NOT_STARTED | — | 全部（依 D-028，於 A2 導入 HwndHost 後驗證） |
@@ -51,10 +51,12 @@
 | T-018 | 2026-11-12 | 84567d1 之 TESTING.md | 使用者 Windows 11 實機，單機 | 使用者 | V-08 以 `Start-Process notepad -Verb RunAs` 觸發 UAC | 未測（UAC 未出現） | 指令執行後沒有出現 UAC。可能原因：PowerShell 已是系統管理員權限、UAC 關閉或設為不通知、或 Windows 11 新版記事本（封裝 App）不經 UAC。已改用 `Start-Process cmd -Verb RunAs` 並加入檢查步驟，待使用者回報檢查結果 |
 | T-019 | 2026-11-12 | 5698b8b 之 TESTING.md | 使用者 Windows 11 實機（測試機 A） | 使用者 | V-08 環境檢查 | 未測（環境：UAC 設為不通知） | PowerShell 非系統管理員（`False`，前面測試的 Host 皆為一般權限，結果有效）。`EnableLUA=1`、`ConsentPromptBehaviorAdmin=0`（系統管理員帳戶提權不詢問）、`PromptOnSecureDesktop=0`（不使用安全桌面）。此設定下 UAC 提示與安全桌面都不會出現，V-08 無法在此電腦驗證；需在 UAC 為預設設定的電腦（或使用者自行暫時調回預設）測試。G0-03 / VID-02 的 UAC 部分同樣受此限制 |
 | T-020 | 2026-11-12 | 84567d1 之建置 | 使用者 Windows 11 實機，單機 | 使用者 | A1 重測：V-04、V-05、V-08、V-12 | PASS | V-04、V-05 新介面通過；V-08 使用者回報通過（T-019 時此電腦 UAC 為「不通知」，測試時的 UAC 設定未另行回報）；V-12 `--memlog` 約 11 分鐘：工作集 125 → 126 → 126 MB、私有 100 MB 不變、受控堆積（GC 後）31 → 29 → 28 MB、gen2 GC 共 3 次——**持平，無記憶體成長**，確認 D-043 在 Windows 上有效 |
+| T-021 | 2026-11-12 | 本筆提交 | 雲端 Linux（.NET 10） | Claude | 規劃書對齊第二批：G-03 DPAPI 檔案格式（檔頭、明文遷移、用途綁定、跨用途解密失敗；DPAPI 實測僅在 Windows 執行）、G-04 多帳號（各自驗證、不存在帳號、增改刪、重複拒絕、存讀）、G-06 公鑰信任（換 IP 不詢問、同位址換金鑰拒絕、移除、舊格式遷移）、NET-03 子連線重連（Video / File 中斷後自動重連且工作階段不結束、超過時限顯示失敗後手動重試成功、Control 中斷仍結束工作階段）。全部回歸 | PASS | 149/149（Protocol 52、Connection 73、Video 24），連續 3 次。**DPAPI 與 Windows 上的重連需實機驗證（R-17～R-22）** |
 
 ## 4. 尚待人工執行
 
 | 項目 | 對應 | 需要 | 步驟 |
 | --- | --- | --- | --- |
 | V-11 縮小 | G0-02 | 寬度大於 1920 的螢幕 | [TESTING.md](TESTING.md) 4.4 V-11 |
+| 規劃書對齊第二批 | G0-01、SEC、NET-03 | 一台 Windows 11 | [TESTING.md](TESTING.md) 4.3.1 R-17～R-22 |
 | 雙機驗證 | G0-01、G0-02 | 兩台實體 Windows 11、同一區域網路 | [TESTING.md](TESTING.md) 第五節 5.6 |

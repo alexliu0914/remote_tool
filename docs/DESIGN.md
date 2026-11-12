@@ -104,7 +104,7 @@ DXGI Desktop Duplication（主螢幕）
 ```
 被控端                                                         控制端
 DXGI → BGRA → (縮放) → 裁為偶數寬高 → BGRA→NV12（CPU）
-  → Media Foundation H.264 編碼（A2a：軟體 MFT；A2a-2：硬體優先）
+  → Media Foundation H.264 編碼（硬體非同步 MFT 優先 → 軟體 MFT，D-052）
   → Annex B → VideoFrame 分塊（≤512 KB）──────────────────▶ 組裝（檢查順序、塊數、大小）
                                                             → MF H.264 解碼（A2a：軟體）→ NV12→BGRA（CPU，裁掉對齊列）
                                                             → FrameCanvas → WriteableBitmap（A2b 改 HwndHost + D3D11）
@@ -112,7 +112,7 @@ DXGI → BGRA → (縮放) → 裁為偶數寬高 → BGRA→NV12（CPU）
 
 - 協商：控制端 Video Hello 宣告 `video.h264` / `video.tiles`；被控端擇一，編碼器故障時改送區塊差異（控制端兩者都能處理）。
 - 關鍵幀：第一張、解析度改變、重新整理、擷取恢復、子連線重連時強制關鍵幀（ICodecAPI ForceKeyFrame）；GOP 2 秒；關鍵幀前若無 SPS/PPS 則補上序列標頭。
-- 專案：`src/RemoteTool.Media`（net10.0-windows，Vortice.MediaFoundation），`MfH264Encoder` / `MfH264Decoder`；`ProcessOutput` 以 COM vtable 呼叫以明確掌握 sample 參考計數。
+- 專案：`src/RemoteTool.Media`（net10.0-windows，Vortice.MediaFoundation），`MfH264HardwareEncoder`（非同步、事件執行緒）/ `MfH264Encoder`（同步軟體）/ `ResilientH264Encoder`（硬體失敗改軟體）/ `MfH264Decoder`；`ProcessOutput` 以 COM vtable 呼叫以明確掌握 sample 參考計數。
 
 ## 4. 輸入（規劃中，B1）
 

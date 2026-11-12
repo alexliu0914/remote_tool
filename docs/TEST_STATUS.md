@@ -59,10 +59,12 @@
 | T-026 | 2026-11-12 | 999891f 之建置 | 使用者 Windows 11 實機，單機 | 使用者 | R-21、R-22 以正確指令重測（`--test-drop-video 20`、`--test-drop-file 20`） | PASS | Video、File 子連線被定時關閉後自動重連，狀態列「已重連」次數累加，工作階段不結束。4.3.1 R-17～R-22 全部通過（T-022～T-026）；NET-03 單機驗證完成 |
 | T-027 | 2026-11-12 | 本筆提交 | 雲端 Linux（.NET 10） | Claude | A2a：BGRA↔NV12（往返誤差、黑白邊界值、stride 與補齊列、奇數尺寸拒絕）、VideoFrame 分塊組裝（順序、混雜、塊數、尺寸、16 MiB 上限）、H.264 傳輸路徑（假編解碼器經 TLS：分塊後逐像素一致、未宣告能力時改送區塊差異、編碼器故障改用區塊差異並送完整畫面、沒有新畫面時重新編碼為關鍵幀、奇數尺寸裁切）；Media Foundation 編解碼器（RemoteTool.Media）交叉建置與 win-x64 發佈。全部回歸 | PASS | 162/162（Protocol 52、Connection 73、Video 37），連續 2 次。**Media Foundation 編碼與解碼只能在 Windows 執行，未經實機驗證**（TESTING.md 4.5 H-01～H-11） |
 | T-028 | 2026-11-12 | a17c3b8 之建置 | 使用者 Windows 11 實機，單機 | 使用者 | A2a H.264：TESTING.md 4.5 H-01～H-11 | PASS | 全部通過。被控端使用「H264 Encoder MFT」（軟體）1920×1080，控制端使用軟體 H.264 解碼。H-05：Host 與 Controller CPU 皆約 5% 以下。H-10 `--memlog` 約 12 分鐘：連線後工作集 198 → 205 → 206 MB、私有 225 → 231 → 233 MB、受控堆積（GC 後）29 → 32 → 33 MB、gen2 GC 共 2 次——**持平**（較 A1 高約 80 MB，為編碼器緩衝區，未持續增加） |
+| T-029 | 2026-11-12 | 本筆提交 | 雲端 Linux（.NET 10） | Claude | A2a-2 硬體 H.264 編碼器（非同步 MFT）與硬體→軟體自動切換：交叉建置、`--codec` 參數驗證、全部回歸 | PASS | 162/162。**硬體編碼只能在 Windows 實機驗證**（TESTING.md 4.6 HW-01～HW-06） |
 
 ## 4. 尚待人工執行
 
 | 項目 | 對應 | 需要 | 步驟 |
 | --- | --- | --- | --- |
 | V-11 縮小 | G0-02 | 寬度大於 1920 的螢幕 | [TESTING.md](TESTING.md) 4.4 V-11 |
+| A2a-2 硬體編碼 | G0-02 | 一台有 GPU 的 Windows 11 | [TESTING.md](TESTING.md) 4.6 HW-01～HW-06 |
 | 雙機驗證 | G0-01、G0-02 | 兩台實體 Windows 11、同一區域網路 | [TESTING.md](TESTING.md) 第五節 5.6 |

@@ -64,9 +64,8 @@ public class H264PathTests
         return (server, capture, encoders, logs);
     }
 
-    private static Task<ControllerSession> Connect(HostServer server, VideoReceiver receiver, bool h264, List<bool>? keyframeRequests = null)
+    private static Task<ControllerSession> Connect(HostServer server, VideoReceiver receiver, bool h264)
     {
-        ControllerSession? session = null;
         var t = ControllerClient.ConnectAsync(new ControllerConnectOptions
         {
             Host = "127.0.0.1", Port = server.Port, Username = "u", Password = "password123",

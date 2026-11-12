@@ -50,16 +50,23 @@ static class HostProgram
                 return 0;
             }
 
-            string codec = ParseChoice(args, "--codec", "auto", ["auto", "h264", "tiles"]);
+            string codec = ParseChoice(args, "--codec", "auto", ["auto", "h264", "h264-hw", "h264-sw", "tiles"]);
             int bitrate = ParseIntOption(args, "--bitrate", 6000, 500, 50000);
+            var mode = codec switch
+            {
+                "h264-hw" => H264EncoderMode.Hardware,
+                "h264-sw" => H264EncoderMode.Software,
+                _ => H264EncoderMode.Auto,
+            };
             bool h264 = false;
             string h264Detail = "已用 --codec tiles 停用";
             if (codec != "tiles")
             {
-                h264 = MfH264Encoder.IsAvailable(out h264Detail);
-                if (!h264 && codec == "h264")
+                Console.WriteLine("檢查 H.264 編碼器…");
+                h264 = ResilientH264Encoder.Probe(mode, out h264Detail, Log);
+                if (!h264 && codec != "auto")
                 {
-                    Console.Error.WriteLine($"無法使用 H.264 編碼器：{h264Detail}");
+                    Console.Error.WriteLine($"無法使用指定的 H.264 編碼器（{codec}）：{h264Detail}");
                     return 1;
                 }
             }
@@ -70,7 +77,7 @@ static class HostProgram
                 MaxFps = fps,
                 MaxWidth = ParseIntOption(args, "--max-width", 1920, 320, 8192),
                 Log = Log,
-                EncoderFactory = h264 ? (w, h) => new MfH264Encoder(w, h, fps, bitrate, Log) : null,
+                EncoderFactory = h264 ? (w, h) => new ResilientH264Encoder(w, h, fps, bitrate, mode, Log) : null,
             };
             _videoFormat = h264
                 ? $"H.264 可用（{h264Detail}），{bitrate} kbps；控制端不支援時改用區塊差異"
@@ -128,7 +135,9 @@ static class HostProgram
               Host.exe --fingerprint    顯示本機主機指紋
 
             畫面選項：
-              --codec auto|h264|tiles   影像格式：auto（預設，H.264 可用就用）、h264（強制）、tiles（A1 區塊差異）
+              --codec <格式>            auto（預設：硬體 H.264 → 軟體 H.264 → 區塊差異）
+                                        h264（必須 H.264，硬體優先）、h264-hw（只用硬體）、h264-sw（只用軟體）
+                                        tiles（A1 區塊差異）
               --bitrate <kbps>          H.264 位元率，預設 6000
               --fps <1~60>              畫面更新上限，預設 H.264 為 30、區塊差異為 10
               --max-width <寬>          畫面寬度上限，超過以整數倍縮小，預設 1920

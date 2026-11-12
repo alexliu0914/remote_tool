@@ -66,7 +66,7 @@ public sealed class MfH264Encoder : IVideoEncoder
             try
             {
                 mft = ActivateDetached(activate);
-                Configure(mft, width, height, fps, bitrateKbps);
+                ConfigureTypes(mft, width, height, fps, bitrateKbps, _log);
                 _mft = mft;
                 Name = $"H.264（軟體：{FriendlyName(activate)}）";
                 var info = mft.GetOutputStreamInfo(0);
@@ -86,7 +86,8 @@ public sealed class MfH264Encoder : IVideoEncoder
         throw new InvalidOperationException("找不到可用的 H.264 編碼器", last);
     }
 
-    private void Configure(IMFTransform mft, int width, int height, int fps, int bitrateKbps)
+    /// <summary>設定 H.264 輸出 / NV12 輸入型別與編碼參數（軟體、硬體共用）。</summary>
+    internal static void ConfigureTypes(IMFTransform mft, int width, int height, int fps, int bitrateKbps, Action<string>? log)
     {
         try { mft.Attributes.Set(LowLatency, 1u); } catch (SharpGenException) { /* 不支援時以 ICodecAPI 再設一次 */ }
 
@@ -120,7 +121,7 @@ public sealed class MfH264Encoder : IVideoEncoder
         if (!CodecApi.SetUInt32(mft, CodecApi.AVEncCommonMeanBitRate, (uint)(bitrateKbps * 1000))) failed.Add("位元率");
         if (!CodecApi.SetUInt32(mft, CodecApi.AVEncMPVGOPSize, (uint)(fps * 2))) failed.Add("GOP");
         if (!CodecApi.SetUInt32(mft, CodecApi.AVEncMPVDefaultBPictureCount, 0)) failed.Add("B 幀");
-        if (failed.Count > 0) _log?.Invoke($"H.264 編碼器不支援部分設定：{string.Join("、", failed)}（不影響運作）");
+        if (failed.Count > 0) log?.Invoke($"H.264 編碼器不支援部分設定：{string.Join("、", failed)}（不影響運作）");
     }
 
     public EncodedFrame? Encode(FrameBuffer frame, bool forceKeyframe)

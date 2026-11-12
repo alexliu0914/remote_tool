@@ -143,7 +143,7 @@ $C = ".\src\RemoteTool.Controller\bin\Release\net10.0-windows\Controller.exe"
 | V-05 | 按「重新整理畫面」 | 狀態列右側先出現「已要求重新整理…」，接著變成「畫面已重新整理（時:分:秒）」；連線不中斷（畫面內容本來就相同，所以看起來不會變，以狀態列文字為準） |
 | V-06 | 縮放畫面視窗大小、最大化 | 畫面跟著縮放，比例不變形 |
 | V-07 | 變更被控端解析度（設定 → 系統 → 顯示器 → 顯示器解析度），之後改回 | 畫面短暫停住後恢復，狀態列解析度跟著變；連線不中斷 |
-| V-08 | 在**另一個** PowerShell 視窗執行 `Start-Process notepad -Verb RunAs`，跳出 UAC「是否允許此 App 變更你的裝置？」時按「**否**」 | UAC 期間畫面停住（視窗 A 顯示「畫面暫時無法擷取」），關閉 UAC 後恢復（「畫面擷取恢復」）；連線不中斷 |
+| V-08 | 在**一般（非系統管理員）**的 PowerShell 視窗執行 `Start-Process cmd -Verb RunAs`，跳出 UAC「是否允許此 App 變更你的裝置？」（螢幕變暗）時按「**否**」 | UAC 期間畫面停住（視窗 A 顯示「畫面暫時無法擷取」），關閉 UAC 後恢復（「畫面擷取恢復」）；連線不中斷。**沒有跳出 UAC** 時見下方「V-08 沒有出現 UAC」 |
 | V-09 | 按 Win+L 鎖定，再登入解鎖 | 解鎖後畫面恢復、連線仍在（單機時鎖定期間無法看控制端，解鎖後確認即可） |
 | V-10 | 關閉 Host，改用 `& $H --fps 5` 啟動後連線 | 狀態列 FPS 不超過 5 |
 | V-11 | 有 2K / 4K 螢幕時：連線後看狀態列 | 寬度超過 1920 的螢幕會縮小（例如 3840×2160 → `1920×1080`） |
@@ -167,6 +167,25 @@ $C = ".\src\RemoteTool.Controller\bin\Release\net10.0-windows\Controller.exe"
 > | V-09 鎖定 | 可以，解鎖後確認 | 鎖定期間看不到；解鎖後確認視窗 A 的訊息與控制端仍連線 |
 > | V-11 2K / 4K | 需要寬度大於 1920 的螢幕 | 沒有就記為「未測（無設備）」 |
 > | 從另一台觀察鎖定、UAC 期間的畫面 | 需要雙機 | 第五節 5.6 |
+
+> **V-08 沒有出現 UAC**：先在 PowerShell 執行下面兩行檢查（只讀取，不改設定）：
+>
+> ```powershell
+> ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+> ```
+>
+> ```powershell
+> Get-ItemProperty HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System | Select-Object EnableLUA, ConsentPromptBehaviorAdmin, PromptOnSecureDesktop
+> ```
+>
+> | 結果 | 意義 |
+> | --- | --- |
+> | 第一行為 `True` | 這個 PowerShell 已經是系統管理員權限，再提權不會詢問。請改開一般 PowerShell；**Host 也應從一般 PowerShell 啟動**（D-003：被控端不提升權限） |
+> | `EnableLUA` 為 0 | UAC 已關閉，此電腦無法測 V-08 |
+> | `ConsentPromptBehaviorAdmin` 為 0 | UAC 設為「不要通知」，此電腦無法測 V-08 |
+> | `PromptOnSecureDesktop` 為 0 | UAC 會出現但**螢幕不變暗**（不使用安全桌面），擷取不會中斷，V-08 預期結果不適用 |
+>
+> 無法測時記為「未測（環境：…）」。是否調整 UAC 設定由使用者自行決定，本測試不要求變更安全設定。
 
 > 若 V-01 黑畫面或視窗 A 出現「無法啟動 DXGI 擷取」「找不到接著螢幕的顯示卡」，請把視窗 A 的訊息完整回報。
 

@@ -23,8 +23,11 @@ return await HostProgram.RunAsync(args);
 
 static class HostProgram
 {
+    [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern bool SetProcessDpiAwarenessContext(IntPtr value);
+
     public static async Task<int> RunAsync(string[] args)
     {
+        SetProcessDpiAwarenessContext(new IntPtr(-4)); // Per-Monitor V2：座標以實際像素計算（PLAN §5.2）
         try
         {
             if (args.Contains("--help") || args.Contains("-h") || args.Contains("/?"))
@@ -85,7 +88,9 @@ static class HostProgram
             var drops = new TestDrops(
                 ParseIntOption(args, "--test-drop-video", 0, 5, 3600),
                 ParseIntOption(args, "--test-drop-file", 0, 5, 3600));
-            return await ServeAsync(ConsoleInput.ParsePort(args, ProtocolInfo.DefaultPort), video, args.Contains("--memlog") || args.Contains("--memlog-fullgc"), drops, args.Contains("--memlog-fullgc"));
+            int gi = Array.IndexOf(args, "--guard-pipe");
+            string? guardPipe = gi >= 0 ? args[gi + 1] : null;
+            return await ServeAsync(ConsoleInput.ParsePort(args, ProtocolInfo.DefaultPort), video, args.Contains("--memlog") || args.Contains("--memlog-fullgc"), drops, args.Contains("--memlog-fullgc"), guardPipe);
         }
         catch (ArgumentException ex)
         {
@@ -99,7 +104,7 @@ static class HostProgram
     private static void ValidateArguments(string[] args)
     {
         string[] flags = ["--setup", "--add-user", "--list-users", "--fingerprint", "--memlog", "--memlog-fullgc"];
-        string[] withValue = ["--port", "--fps", "--max-width", "--test-drop-video", "--test-drop-file", "--remove-user", "--codec", "--bitrate"];
+        string[] withValue = ["--port", "--fps", "--max-width", "--test-drop-video", "--test-drop-file", "--remove-user", "--codec", "--bitrate", "--guard-pipe"];
         for (int i = 0; i < args.Length; i++)
         {
             if (flags.Contains(args[i])) continue;
@@ -317,8 +322,25 @@ static class HostProgram
             Log($"[測試] 依 --test-drop 設定關閉 {ctx.Channel} 子連線");
     }
 
-    private static async Task<int> ServeAsync(int port, VideoStreamerOptions video, bool memlog, TestDrops drops, bool fullGc = false)
+    private static async Task<int> ServeAsync(int port, VideoStreamerOptions video, bool memlog, TestDrops drops, bool fullGc = false,
+        string? guardPipe = null)
     {
+        // 遠端鍵鼠：只有由 HostGuard 啟動（帶 --guard-pipe）時才啟用；Host 本身不呼叫 SendInput（PLAN §3）
+        GuardClient? guard = null;
+        if (guardPipe is not null)
+        {
+            try
+            {
+                guard = new GuardClient(guardPipe, Log);
+            }
+            catch (Exception ex) when (ex is TimeoutException or IOException or UnauthorizedAccessException)
+            {
+                Log($"無法連到 HostGuard（{ex.Message}），遠端鍵鼠停用");
+            }
+        }
+        using var _guard = guard;
+        InputRelay? relay = guard is null ? null : new InputRelay(guard, () => DxgiScreenCapture.CurrentGeometry, Log);
+        bool warnedNoGuard = false;
         CredentialSet? credentials;
         try
         {
@@ -359,6 +381,18 @@ static class HostProgram
             Port = port,
             Log = Log,
             SubChannelHandler = ctx => HandleSubChannelAsync(ctx, video, drops),
+            InputHandler = frame =>
+            {
+                if (relay is not null) return relay.Handle(frame);
+                if (frame.Type is MessageType.KeyEvent or MessageType.MouseMoveEvent or MessageType.MouseButtonEvent or MessageType.MouseWheelEvent
+                    && !warnedNoGuard)
+                {
+                    warnedNoGuard = true;
+                    Log("收到遠端鍵鼠，但 Host 不是由 HostGuard 啟動，已忽略（請改執行 HostGuard.exe）");
+                }
+                return true;
+            },
+            SessionEnded = () => relay?.ReleaseAll(), // 工作階段結束：放開遠端按鍵（PLAN §7）
         });
 
         try
@@ -378,6 +412,9 @@ static class HostProgram
         Console.WriteLine($"  埠：  {server.Port}");
         Console.WriteLine($"  畫面：上限 {video.MaxFps} FPS、寬 {video.MaxWidth}");
         Console.WriteLine($"  影像格式：{_videoFormat}");
+        Console.WriteLine(guard is not null
+            ? "  遠端鍵鼠：啟用（由 HostGuard 注入）"
+            : "  遠端鍵鼠：停用（只能看畫面；要操作請改執行 HostGuard.exe）");
         if (drops.VideoSeconds > 0 || drops.FileSeconds > 0)
             Console.WriteLine($"  [測試模式] 子連線定時關閉：Video {drops.VideoSeconds} 秒、File {drops.FileSeconds} 秒");
         Console.WriteLine("  本機 IP（控制端連這個）：");

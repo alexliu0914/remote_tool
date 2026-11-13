@@ -43,6 +43,11 @@ public partial class RemoteWindow : Window
 
     // G0-04 驗證：畫面區收到的輸入統計
     private long _mouseEvents, _keyEvents, _drops;
+
+    // B1：遠端控制。連到本機（127.0.0.1）時預設關閉，避免單機測試時滑鼠被自己注入的移動拉走
+    private bool _remoteControl;
+    private long _sentInputs;
+    private const uint Generation = 1; // 輸入世代（B1d 起由被控端暫停 / 恢復時更新）
     private string _lastInput = "";
     private long _lastInputUiUpdate;
 
@@ -59,6 +64,9 @@ public partial class RemoteWindow : Window
 
         HostContainer.Child = _screen;
         _screen.InputReceived += OnScreenInput;
+        _screen.RemoteInputReceived += OnRemoteInput;
+        _remoteControl = !IsLoopback(session.HostKey);
+        ApplyControlButton();
         _screen.FilesDropped += OnFilesDropped;
         _screen.RedrawRequested += () => OnFrameCompleted(default);
         HostContainer.SizeChanged += (_, _) => UpdateScrollBars();
@@ -274,6 +282,40 @@ public partial class RemoteWindow : Window
         OnFrameCompleted(default);
     }
 
+    // ------------------------------------------------------------------ B1：遠端控制
+
+    private static bool IsLoopback(string hostKey)
+    {
+        string host = hostKey[..hostKey.LastIndexOf(':')].Trim('[', ']');
+        return host is "localhost" or "::1" || host.StartsWith("127.");
+    }
+
+    private void ApplyControlButton()
+        => ControlButton.Content = _remoteControl ? "遠端控制：開" : "遠端控制：關";
+
+    private void OnControlToggle(object sender, RoutedEventArgs e)
+    {
+        _remoteControl = !_remoteControl;
+        if (!_remoteControl) _session.SendInput(new ReleaseAllInput(Generation)); // 關閉時放開遠端按住的鍵
+        ApplyControlButton();
+        UpdateInputText();
+        DiagnosticLog.Write($"遠端控制：{(_remoteControl ? "開" : "關")}");
+    }
+
+    private void OnRemoteInput(RemoteInput input)
+    {
+        if (!_remoteControl && input is not RemoteReleaseAll) return;
+        switch (input)
+        {
+            case RemoteKey k: _session.SendInput(new KeyEvent(Generation, k.ScanCode, k.Extended, k.Down)); break;
+            case RemoteMouseMove m: _session.SendInput(new MouseMoveEvent(Generation, m.X, m.Y)); break;
+            case RemoteMouseButton b: _session.SendInput(new MouseButtonEvent(Generation, b.Button, b.Down, b.X, b.Y)); break;
+            case RemoteMouseWheel w: _session.SendInput(new MouseWheelEvent(Generation, w.Delta, w.Horizontal, w.X, w.Y)); break;
+            case RemoteReleaseAll: _session.SendInput(new ReleaseAllInput(Generation)); break;
+        }
+        _sentInputs++;
+    }
+
     // ------------------------------------------------------------------ G0-04：畫面區輸入與拖放
 
     private void OnScreenInput(ScreenInput input)
@@ -292,7 +334,11 @@ public partial class RemoteWindow : Window
     }
 
     private void UpdateInputText()
-        => InputText.Text = $"畫面區輸入（G0-04 驗證，尚未送到遠端）：{_lastInput}　｜　滑鼠 {_mouseEvents} 次、鍵盤 {_keyEvents} 次、拖放 {_drops} 次";
+    {
+        string mode = _remoteControl ? $"遠端控制：開（已送出 {_sentInputs} 個事件）" : "遠端控制：關（只顯示，不送出）";
+        string loop = _screen.IgnoredInjected > 0 ? $"、忽略本機注入 {_screen.IgnoredInjected} 次" : "";
+        InputText.Text = $"畫面區輸入｜{mode}｜{_lastInput}　｜　滑鼠 {_mouseEvents} 次、鍵盤 {_keyEvents} 次、拖放 {_drops} 次{loop}";
+    }
 
     private async void OnFilesDropped(IReadOnlyList<string> paths, int? remoteX, int? remoteY)
     {
@@ -398,7 +444,7 @@ public partial class RemoteWindow : Window
         if (_closing) return;
         _closing = true;
         _statsTimer.Stop();
-        DiagnosticLog.Write($"畫面區輸入統計：滑鼠 {_mouseEvents} 次、鍵盤 {_keyEvents} 次、拖放 {_drops} 次");
+        DiagnosticLog.Write($"畫面區輸入統計：滑鼠 {_mouseEvents} 次、鍵盤 {_keyEvents} 次、拖放 {_drops} 次；送出 {_sentInputs} 個遠端事件；忽略本機注入 {_screen.IgnoredInjected} 次");
         await _session.DisposeAsync();
         _receiver.Dispose();
     }

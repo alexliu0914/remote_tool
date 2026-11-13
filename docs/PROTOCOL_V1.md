@@ -72,7 +72,8 @@
 | 10 | SessionStateChanged | Control | H→C | 規劃中 |
 | 11 | PauseControl | Control | H→C | 規劃中 |
 | 12 | ResumeControl | Control | 雙向 | 規劃中 |
-| 20–25 | KeyEvent、MouseMoveEvent、MouseButtonEvent、MouseWheelEvent、InputHeartbeat、ReleaseAllInput | Control | C→H | 規劃中（B1） |
+| 20–23、25 | KeyEvent、MouseMoveEvent、MouseButtonEvent、MouseWheelEvent、ReleaseAllInput | Control | C→H | B1a 已實作（D-056） |
+| 24 | InputHeartbeat | Control | C→H | 規劃中（B1b） |
 | 40 | VideoFrame | Video | H→C | 已實作（A2a） |
 | 41 | CursorShape | Video | H→C | 規劃中（A3） |
 | 42 | KeyframeRequest | Video | C→H | 已實作 |
@@ -129,6 +130,11 @@
 | SubConnectResult | Success、Error(AuthError) |
 | Heartbeat | Timestamp(long，送出方自用) |
 | KeyframeRequest | LastFrameId |
+| KeyEvent | Generation、ScanCode（1～0x1FF）、Extended、Down |
+| MouseMoveEvent | Generation、X、Y（遠端畫面正規化 0～65535） |
+| MouseButtonEvent | Generation、Button（1 左、2 右、3 中、4 X1、5 X2）、Down、X、Y |
+| MouseWheelEvent | Generation、Delta（±120 為一格）、Horizontal、X、Y |
+| ReleaseAllInput | Generation（被控端不檢查世代，一律放開） |
 | VideoFrame | FrameId、Width、Height（偶數）、IsKeyframe、ChunkIndex、ChunkCount（1～64）、Data（Annex B，每塊 ≤ 512 KB，一張 ≤ 16 MiB）、Codec（"h264"） |
 | VideoTileUpdate | FrameId、FrameWidth、FrameHeight、EndOfFrame、Tiles[]{X、Y、Width、Height、Data}、IsKeyframe（2026-11-12 加入，全部區塊時為 true） |
 

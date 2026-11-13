@@ -293,6 +293,14 @@ public sealed class ControllerSession : IAsyncDisposable
     private long _lastRoundTripTicks = -1;
     private long _videoBytesReceived;
     private int _reconnects;
+    private readonly System.Threading.Channels.Channel<object> _input =
+        System.Threading.Channels.Channel.CreateBounded<object>(new System.Threading.Channels.BoundedChannelOptions(256)
+        {
+            SingleReader = true,
+            FullMode = System.Threading.Channels.BoundedChannelFullMode.Wait,
+        });
+    private MouseMoveEvent? _pendingMove;
+    private readonly object _moveGate = new();
 
     internal ControllerSession(string hostKey, string fingerprint,
         FrameStream control, FrameStream video, FrameStream file, ControllerConnectOptions options)
@@ -368,6 +376,49 @@ public sealed class ControllerSession : IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// 送出鍵鼠事件（B1）。依呼叫順序經單一佇列送出（按下 / 放開不會顛倒）；
+    /// 滑鼠移動會合併：尚未送出的移動只保留最新一筆。佇列滿時丟棄（輸入不可無限堆積）。
+    /// </summary>
+    public void SendInput<T>(T message) where T : IMessage
+    {
+        if (_cts.IsCancellationRequested) return;
+        if (message is MouseMoveEvent move)
+        {
+            lock (_moveGate)
+            {
+                bool queued = _pendingMove is not null;
+                _pendingMove = move;
+                if (queued) return; // 佇列中已有一個移動標記，送出時取最新值
+            }
+            _input.Writer.TryWrite(MoveMarker);
+            return;
+        }
+        _input.Writer.TryWrite(message);
+    }
+
+    private static readonly object MoveMarker = new();
+
+    private async Task<string> InputLoopAsync(CancellationToken ct)
+    {
+        await foreach (var item in _input.Reader.ReadAllAsync(ct).ConfigureAwait(false))
+        {
+            switch (item)
+            {
+                case var _ when ReferenceEquals(item, MoveMarker):
+                    MouseMoveEvent? m;
+                    lock (_moveGate) { m = _pendingMove; _pendingMove = null; }
+                    if (m is not null) await ControlChannel.WriteAsync(m, cancellationToken: ct).ConfigureAwait(false);
+                    break;
+                case KeyEvent k: await ControlChannel.WriteAsync(k, cancellationToken: ct).ConfigureAwait(false); break;
+                case MouseButtonEvent b: await ControlChannel.WriteAsync(b, cancellationToken: ct).ConfigureAwait(false); break;
+                case MouseWheelEvent w: await ControlChannel.WriteAsync(w, cancellationToken: ct).ConfigureAwait(false); break;
+                case ReleaseAllInput r: await ControlChannel.WriteAsync(r, cancellationToken: ct).ConfigureAwait(false); break;
+            }
+        }
+        return "輸入佇列結束";
+    }
+
     /// <summary>要求被控端下一次送出完整畫面。</summary>
     public ValueTask RequestKeyframeAsync(long lastFrameId, CancellationToken cancellationToken = default)
         => VideoChannel.WriteAsync(new KeyframeRequest(lastFrameId), cancellationToken: cancellationToken);
@@ -384,7 +435,8 @@ public sealed class ControllerSession : IAsyncDisposable
         _loops = Task.WhenAll(
             RunSessionCriticalAsync(ControlLoopAsync, "Control"),
             RunSessionCriticalAsync(ct => SubChannelLoopAsync(ChannelKind.Video, _options.VideoFrameReceived, ct), "Video"),
-            RunSessionCriticalAsync(ct => SubChannelLoopAsync(ChannelKind.File, null, ct), "File"));
+            RunSessionCriticalAsync(ct => SubChannelLoopAsync(ChannelKind.File, null, ct), "File"),
+            RunSessionCriticalAsync(InputLoopAsync, "輸入"));
     }
 
     /// <summary>迴圈結束即結束整個工作階段。子連線迴圈只會因工作階段結束或未預期錯誤而結束。</summary>

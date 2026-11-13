@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using RemoteTool.Connection;
 using RemoteTool.Video;
 using SharpGen.Runtime;
 using Vortice.Direct3D;
@@ -26,6 +27,11 @@ internal sealed class DxgiScreenCapture : IScreenCapture
     private string? _lastError;
 
     public DxgiScreenCapture(Action<string>? log = null) => _log = log;
+
+    /// <summary>目前擷取的螢幕在虛擬桌面上的位置（供遠端滑鼠座標換算，B1）。尚未擷取時為 null。</summary>
+    public static ScreenGeometry? CurrentGeometry { get; private set; }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern int GetSystemMetrics(int index);
 
     public CaptureStatus Capture(TimeSpan timeout, FrameBuffer target)
     {
@@ -116,6 +122,10 @@ internal sealed class DxgiScreenCapture : IScreenCapture
 
             using var _adapter = adapter;
             using var _output = output;
+            var d = output.Description.DesktopCoordinates;
+            // 虛擬桌面範圍（程式已宣告 Per-Monitor V2，因此為實際像素）
+            CurrentGeometry = new ScreenGeometry(d.Left, d.Top, d.Right - d.Left, d.Bottom - d.Top,
+                GetSystemMetrics(76), GetSystemMetrics(77), GetSystemMetrics(78), GetSystemMetrics(79));
 
             _context?.Dispose(); _context = null;
             _device?.Dispose(); _device = null;

@@ -24,7 +24,8 @@ internal sealed class TestHost : IAsyncDisposable
     public static readonly Argon2Parameters WeakArgon2 = new(MemoryKiB: 256, Iterations: 1, Parallelism: 1);
 
     public TestHost(LoginThrottle? throttle = null, TimeSpan? heartbeatTimeout = null, TimeSpan? handshakeTimeout = null,
-        int maxPendingPerAddress = 4, TimeSpan? tokenLifetime = null, Func<SubChannelContext, Task>? subChannelHandler = null)
+        int maxPendingPerAddress = 4, TimeSpan? tokenLifetime = null, Func<SubChannelContext, Task>? subChannelHandler = null,
+        Func<Frame, bool>? inputHandler = null, Action? sessionEnded = null)
     {
         Server = new HostServer(new HostServerOptions
         {
@@ -33,6 +34,8 @@ internal sealed class TestHost : IAsyncDisposable
             AllowWeakCredentialParameters = true,
             MaxPendingConnectionsPerAddress = maxPendingPerAddress,
             SubChannelHandler = subChannelHandler,
+            InputHandler = inputHandler,
+            SessionEnded = sessionEnded,
             BindAddress = IPAddress.Loopback,
             Port = 0,
             HeartbeatTimeout = heartbeatTimeout ?? TimeSpan.FromSeconds(ProtocolInfo.HeartbeatTimeoutSeconds),

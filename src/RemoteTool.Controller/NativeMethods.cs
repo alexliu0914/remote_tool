@@ -45,6 +45,11 @@ internal static class NativeMethods
     [DllImport("user32.dll")] public static extern bool TranslateMessage(ref System.Windows.Interop.MSG msg);
     [DllImport("user32.dll")] public static extern IntPtr DispatchMessage(ref System.Windows.Interop.MSG msg);
     [DllImport("user32.dll")] public static extern IntPtr GetFocus();
+    [DllImport("user32.dll")] public static extern IntPtr GetMessageExtraInfo();
+    [DllImport("user32.dll")] public static extern IntPtr SetCapture(IntPtr hwnd);
+    [DllImport("user32.dll")] public static extern bool ReleaseCapture();
+    [DllImport("imm32.dll")] public static extern IntPtr ImmAssociateContext(IntPtr hwnd, IntPtr himc);
+    public const int WM_XBUTTONDOWN = 0x020B, WM_XBUTTONUP = 0x020C, WM_CAPTURECHANGED = 0x0215;
     [DllImport("user32.dll")] public static extern IntPtr SetFocus(IntPtr hwnd);
     [DllImport("user32.dll")] public static extern bool GetClientRect(IntPtr hwnd, out RECT rect);
     [DllImport("user32.dll")] public static extern bool ScreenToClient(IntPtr hwnd, ref POINT point);

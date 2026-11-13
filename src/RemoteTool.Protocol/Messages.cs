@@ -131,6 +131,71 @@ public sealed record Heartbeat(
     public static MessageType Type => MessageType.Heartbeat;
 }
 
+/// <summary>滑鼠按鍵。</summary>
+public enum MouseButton : byte
+{
+    Left = 1,
+    Right = 2,
+    Middle = 3,
+    X1 = 4,
+    X2 = 5,
+}
+
+/// <summary>
+/// 鍵盤事件（B1，PLAN §5.2：以掃描碼注入，使用遠端輸入法）。<see cref="Generation"/> 為輸入世代，不符即丟棄。
+/// </summary>
+[MessagePackObject]
+public sealed record KeyEvent(
+    [property: Key(0)] uint Generation,
+    [property: Key(1)] ushort ScanCode,
+    [property: Key(2)] bool Extended,
+    [property: Key(3)] bool Down) : IMessage
+{
+    public static MessageType Type => MessageType.KeyEvent;
+}
+
+/// <summary>滑鼠移動。<see cref="X"/>、<see cref="Y"/> 為遠端畫面上的位置，正規化為 0～65535。</summary>
+[MessagePackObject]
+public sealed record MouseMoveEvent(
+    [property: Key(0)] uint Generation,
+    [property: Key(1)] int X,
+    [property: Key(2)] int Y) : IMessage
+{
+    public static MessageType Type => MessageType.MouseMoveEvent;
+}
+
+/// <summary>滑鼠按鍵（附位置，正規化 0～65535）。</summary>
+[MessagePackObject]
+public sealed record MouseButtonEvent(
+    [property: Key(0)] uint Generation,
+    [property: Key(1)] MouseButton Button,
+    [property: Key(2)] bool Down,
+    [property: Key(3)] int X,
+    [property: Key(4)] int Y) : IMessage
+{
+    public static MessageType Type => MessageType.MouseButtonEvent;
+}
+
+/// <summary>滑鼠滾輪（附位置，正規化 0～65535）。<see cref="Delta"/> 以 120 為一格。</summary>
+[MessagePackObject]
+public sealed record MouseWheelEvent(
+    [property: Key(0)] uint Generation,
+    [property: Key(1)] int Delta,
+    [property: Key(2)] bool Horizontal,
+    [property: Key(3)] int X,
+    [property: Key(4)] int Y) : IMessage
+{
+    public static MessageType Type => MessageType.MouseWheelEvent;
+}
+
+/// <summary>控制端要求放開所有遠端按住的鍵與按鈕（例如畫面區失去焦點）。</summary>
+[MessagePackObject]
+public sealed record ReleaseAllInput(
+    [property: Key(0)] uint Generation) : IMessage
+{
+    public static MessageType Type => MessageType.ReleaseAllInput;
+}
+
 /// <summary>控制端要求被控端下一次送出完整畫面。</summary>
 [MessagePackObject]
 public sealed record KeyframeRequest(

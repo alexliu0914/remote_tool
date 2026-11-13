@@ -40,6 +40,14 @@ public sealed class HostServerOptions
     /// 回傳的 Task 結束或連線中斷時，子連線關閉。null 表示不處理（只接收並丟棄）。
     /// </summary>
     public Func<SubChannelContext, Task>? SubChannelHandler { get; init; }
+
+    /// <summary>
+    /// Control 上的鍵鼠訊息（B1）。依收到順序在 Control 讀取迴圈中同步呼叫；回傳 false 表示不是輸入訊息。
+    /// </summary>
+    public Func<Frame, bool>? InputHandler { get; init; }
+
+    /// <summary>工作階段結束時呼叫（Control 中斷、撤銷）：被控端須放開所有遠端按鍵（PLAN §7）。</summary>
+    public Action? SessionEnded { get; init; }
 }
 
 /// <summary>交給 <see cref="HostServerOptions.SubChannelHandler"/> 的子連線。</summary>
@@ -361,6 +369,8 @@ public sealed class HostServer : IAsyncDisposable
             {
                 if (ReferenceEquals(_session, session)) _session = null;
             }
+            try { _options.SessionEnded?.Invoke(); }
+            catch (Exception ex) { Log($"工作階段結束處理失敗：{ex.Message}"); }
             Log($"{remote}：工作階段結束");
         }
     }
@@ -447,7 +457,8 @@ public sealed class HostServer : IAsyncDisposable
                         return;
 
                     default:
-                        // V1 已定義、但尚未實作的 Control 訊息（鍵鼠、剪貼簿…），目前忽略。
+                        // 鍵鼠交給輸入轉送（B1）；其他 V1 已定義、尚未實作的 Control 訊息（剪貼簿…）目前忽略。
+                        _options.InputHandler?.Invoke(f);
                         break;
                 }
             }

@@ -23,7 +23,7 @@
 | `src/RemoteTool.Host` | net8.0-windows | 被控端主程式；DXGI 擷取 | 已實作（DXGI 待實機驗證） |
 | `src/RemoteTool.Controller` | net8.0-windows（WPF） | 控制端：登入視窗、指紋對話框、遠端畫面視窗 | 已實作（WPF 待實機驗證） |
 | `src/RemoteTool.Media` | net10.0-windows | Media Foundation H.264 編碼 / 解碼 | A2a 已實作（待實機驗證） |
-| `src/RemoteTool.HostGuard` | net10.0-windows | 輸入注入與 Host 監看 | 規劃中（B1） |
+| `src/RemoteTool.HostGuard` | net10.0-windows | 輸入注入與 Host 監看 | B1a：啟動 Host、Pipe 接收、SendInput 注入（D-056） |
 
 跨平台專案可在 Linux / CI 用真實 TLS 測試（D-023）。
 
@@ -119,9 +119,11 @@ DXGI → BGRA → (縮放) → 裁為偶數寬高 → BGRA→NV12（CPU）
 
 `RemoteScreenHost`（HwndHost）內的 Win32 子視窗：D3D11 交換鏈 + Direct2D 繪製；子視窗 WndProc 接收滑鼠 / 鍵盤、OLE IDropTarget 接收檔案拖放，座標換算為遠端畫面座標（G0-04）。覆蓋訊息由 DirectWrite 繪製（airspace 限制）。
 
-## 4. 輸入（規劃中，B1）
+## 4. 輸入（B1a 已實作，D-056；B1b～B1d 規劃中）
 
 Controller 擷取鍵鼠 → Control 連線 → Host 驗證（白名單、工作階段狀態、輸入世代）→ Named Pipe → HostGuard 注入並更新按鍵狀態表（D-005、D-007、D-015）。Host 異常結束時 HostGuard 釋放仍按住的鍵（D-006）。
+
+B1a 實作：畫面區子視窗送掃描碼 + 延伸旗標與正規化座標（0～65535）→ `ControllerSession.SendInput`（佇列 256、滑鼠移動合併）→ Host `InputRelay`（驗證、轉為虛擬桌面座標）→ 16 位元組 `GuardRecord` 經 Named Pipe（CurrentUserOnly、核對用戶端 PID）→ HostGuard `Injector` 單執行緒 SendInput 並維護按鍵狀態表。注入事件帶 dwExtraInfo 標記，控制端忽略之（單機防循環）。放開全部的時機：Pipe 中斷、Host 結束、工作階段結束、控制端失去焦點、關閉「遠端控制」。
 
 ## 5. 工作階段狀態（規劃中；原文 §3）
 

@@ -85,7 +85,7 @@ static class HostProgram
             var drops = new TestDrops(
                 ParseIntOption(args, "--test-drop-video", 0, 5, 3600),
                 ParseIntOption(args, "--test-drop-file", 0, 5, 3600));
-            return await ServeAsync(ConsoleInput.ParsePort(args, ProtocolInfo.DefaultPort), video, args.Contains("--memlog"), drops);
+            return await ServeAsync(ConsoleInput.ParsePort(args, ProtocolInfo.DefaultPort), video, args.Contains("--memlog") || args.Contains("--memlog-fullgc"), drops, args.Contains("--memlog-fullgc"));
         }
         catch (ArgumentException ex)
         {
@@ -98,7 +98,7 @@ static class HostProgram
     /// <summary>不認得的參數一律報錯（避免打錯字被默默忽略，例如 --text-drop-video）。</summary>
     private static void ValidateArguments(string[] args)
     {
-        string[] flags = ["--setup", "--add-user", "--list-users", "--fingerprint", "--memlog"];
+        string[] flags = ["--setup", "--add-user", "--list-users", "--fingerprint", "--memlog", "--memlog-fullgc"];
         string[] withValue = ["--port", "--fps", "--max-width", "--test-drop-video", "--test-drop-file", "--remove-user", "--codec", "--bitrate"];
         for (int i = 0; i < args.Length; i++)
         {
@@ -143,7 +143,8 @@ static class HostProgram
               --max-width <寬>          畫面寬度上限，超過以整數倍縮小，預設 1920
 
             診斷：
-              --memlog                  每 60 秒顯示記憶體用量（工作集、受控堆積、GC 次數）
+              --memlog                  每 60 秒顯示記憶體用量（工作集、私有、GC 已提交、原生估計、GC 次數）
+              --memlog-fullgc           同上，但每次先做完整 GC（判斷是否真的洩漏；會短暫停頓）
 
             測試專用（NET-03 子連線重連，正式使用請勿加）：
               --test-drop-video <秒>    每條 Video 連線建立後經過指定秒數即由被控端關閉
@@ -245,8 +246,14 @@ static class HostProgram
     private static void Log(string message) => Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] {message}");
 
     /// <summary>V-12 診斷：工作集（含原生記憶體）與受控堆積分開顯示，用來判斷成長來自哪裡。</summary>
-    private static void LogMemory()
+    private static void LogMemory(bool fullGc = false)
     {
+        if (fullGc)
+        {
+            // 診斷用：先做完整壓縮 GC，讓「受控堆積」代表真正仍在使用的記憶體（會短暫停頓，正式使用請勿開）
+            GC.Collect(2, GCCollectionMode.Forced, blocking: true, compacting: true);
+            GC.WaitForPendingFinalizers();
+        }
         using var p = System.Diagnostics.Process.GetCurrentProcess();
         var info = GC.GetGCMemoryInfo();
         long privateMb = p.PrivateMemorySize64 / 1048576;
@@ -310,7 +317,7 @@ static class HostProgram
             Log($"[測試] 依 --test-drop 設定關閉 {ctx.Channel} 子連線");
     }
 
-    private static async Task<int> ServeAsync(int port, VideoStreamerOptions video, bool memlog, TestDrops drops)
+    private static async Task<int> ServeAsync(int port, VideoStreamerOptions video, bool memlog, TestDrops drops, bool fullGc = false)
     {
         CredentialSet? credentials;
         try
@@ -383,7 +390,7 @@ static class HostProgram
         Console.WriteLine("按 Ctrl+C 結束。");
         Console.WriteLine();
 
-        using var memTimer = memlog ? new Timer(_ => LogMemory(), null, TimeSpan.Zero, TimeSpan.FromSeconds(60)) : null;
+        using var memTimer = memlog ? new Timer(_ => LogMemory(fullGc), null, TimeSpan.Zero, TimeSpan.FromSeconds(60)) : null;
 
         var stop = new TaskCompletionSource();
         Console.CancelKeyPress += (_, e) =>

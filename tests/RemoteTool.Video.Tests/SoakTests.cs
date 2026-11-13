@@ -86,4 +86,79 @@ public class SoakTests(ITestOutputHelper output)
             return GC.GetTotalMemory(forceFullCollection: true);
         }
     }
+
+    /// <summary>H.264 路徑（借用緩衝區、分塊切片、接收端組裝）長時間執行，強制 GC 後受控堆積須持平（HW-06）。</summary>
+    [Fact]
+    public async Task H264Path_PooledBuffers_ManagedMemoryStaysFlat()
+    {
+        const string user = "u", pass = "password123";
+        await using var server = new HostServer(new HostServerOptions
+        {
+            Certificate = HostCertificate.CreateEphemeral(),
+            Credentials = PasswordHasher.Create(user, pass, new Argon2Parameters(256, 1, 1), allowWeakParameters: true),
+            AllowWeakCredentialParameters = true,
+            BindAddress = IPAddress.Loopback,
+            Port = 0,
+            SubChannelHandler = ctx => ctx.Channel == ChannelKind.Video
+                ? VideoStreamer.RunAsync(new ChangingCapture(1280, 720), ctx.Stream, ctx.Incoming,
+                    new VideoStreamerOptions { MaxFps = 60, EncoderFactory = (w, h) => new PooledFakeEncoder(w, h) },
+                    ctx.Token, clientSupportsH264: true)
+                : Task.Delay(Timeout.Infinite, ctx.Token),
+        });
+        server.Start();
+
+        var receiver = new VideoReceiver(new FrameCanvas(), () => new SizeOnlyDecoder());
+        await using var session = await ControllerClient.ConnectAsync(new ControllerConnectOptions
+        {
+            Host = "127.0.0.1", Port = server.Port, Username = user, Password = pass,
+            KnownHosts = new KnownHostsStore(null), ConfirmNewHost = (_, _) => true,
+            VideoCapabilities = [ProtocolInfo.CapabilityVideoH264, ProtocolInfo.CapabilityVideoTiles],
+            VideoFrameReceived = f => receiver.Handle(f, out _, out _, out _),
+        });
+
+        await Task.Delay(4000);
+        long baseline = FullGc(), f0 = receiver.Canvas.CompletedFrames;
+        await Task.Delay(15000);
+        long end = FullGc(), frames = receiver.Canvas.CompletedFrames - f0;
+        output.WriteLine($"H.264 路徑 15 秒 {frames} 張；強制 GC 後受控堆積 {baseline / 1024} KB → {end / 1024} KB（差 {(end - baseline) / 1024} KB）");
+        Assert.True(frames > 200, "串流太慢，測試無效");
+        Assert.InRange(end - baseline, long.MinValue, 8L * 1024 * 1024);
+
+        static long FullGc()
+        {
+            GC.Collect(2, GCCollectionMode.Forced, blocking: true, compacting: true);
+            GC.WaitForPendingFinalizers();
+            GC.Collect(2, GCCollectionMode.Forced, blocking: true, compacting: true);
+            return GC.GetTotalMemory(forceFullCollection: true);
+        }
+    }
+
+    /// <summary>假編碼器：每張輸出 20～300 KB 的借用緩衝區（模擬 P 幀與關鍵幀大小）。</summary>
+    private sealed class PooledFakeEncoder(int w, int h) : IVideoEncoder
+    {
+        private int _n;
+        public string Name => "假 H.264（借用緩衝區）";
+        public int Width => w;
+        public int Height => h;
+        public EncodedFrame? Encode(FrameBuffer frame, bool forceKeyframe)
+        {
+            int len = (++_n % 30 == 0 || forceKeyframe) ? 300_000 : 20_000 + (_n % 7) * 5_000;
+            var buf = System.Buffers.ArrayPool<byte>.Shared.Rent(len);
+            buf.AsSpan(0, len).Fill((byte)_n);
+            return new EncodedFrame(buf, len, forceKeyframe, Pooled: true);
+        }
+        public void Dispose() { }
+    }
+
+    /// <summary>假解碼器：只輸出指定大小的畫面，不解析內容。</summary>
+    private sealed class SizeOnlyDecoder : IVideoDecoder
+    {
+        public string Name => "假解碼";
+        public bool Decode(byte[] data, int width, int height, FrameBuffer target)
+        {
+            target.Resize(width, height);
+            return true;
+        }
+        public void Dispose() { }
+    }
 }

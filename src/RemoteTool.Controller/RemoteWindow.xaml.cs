@@ -333,8 +333,25 @@ public partial class RemoteWindow : Window
 
     // ------------------------------------------------------------------ 狀態列
 
+    private int _ticks;
+
+    /// <summary>
+    /// 每 60 秒把記憶體用量寫入 controller.log（HD-06）：私有記憶體、GC 已提交、原生（估計）。
+    /// 原生包含 D3D11 / Direct2D / 硬體解碼器的緩衝區（內顯時位於共用系統記憶體）。
+    /// </summary>
+    private void LogMemory()
+    {
+        using var p = System.Diagnostics.Process.GetCurrentProcess();
+        var info = GC.GetGCMemoryInfo();
+        long priv = p.PrivateMemorySize64 / 1048576, committed = info.TotalCommittedBytes / 1048576;
+        DiagnosticLog.Write($"記憶體：工作集 {p.WorkingSet64 / 1048576} MB、私有 {priv} MB｜GC 已提交 {committed} MB、" +
+            $"受控堆積（GC 後）{info.HeapSizeBytes / 1048576} MB｜原生（估計）{priv - committed} MB｜" +
+            $"GC 0/1/2 = {GC.CollectionCount(0)}/{GC.CollectionCount(1)}/{GC.CollectionCount(2)}｜畫面區 {(int)HostContainer.ActualWidth}×{(int)HostContainer.ActualHeight}");
+    }
+
     private void OnStatsTick(object? sender, EventArgs e)
     {
+        if (_ticks++ % 60 == 0) LogMemory();
         long bytes = _session.VideoBytesReceived;
         double kbps = (bytes - _bytesAtLastTick) * 8 / 1000.0;
         _bytesAtLastTick = bytes;

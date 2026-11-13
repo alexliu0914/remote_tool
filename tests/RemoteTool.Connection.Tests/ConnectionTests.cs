@@ -111,10 +111,12 @@ public class ConnectionTests
     [Fact]
     public async Task SlowFingerprintConfirmation_LongerThanHostHandshakeTimeout_StillConnects()
     {
-        await using var host = new TestHost(handshakeTimeout: TimeSpan.FromMilliseconds(300));
+        // 握手時限要留足夠餘裕給「確認後重新連線並登入」（含 TLS 與 Argon2）；
+        // 原本 300 ms 在 CPU 滿載（與長時間測試並行）時偶爾不夠，造成誤判失敗（T-037）。
+        await using var host = new TestHost(handshakeTimeout: TimeSpan.FromMilliseconds(1500));
         await using var session = await ControllerClient.ConnectAsync(host.Options(confirm: (_, _) =>
         {
-            Thread.Sleep(800); // 使用者慢慢核對
+            Thread.Sleep(3000); // 使用者慢慢核對，超過被控端握手時限
             return true;
         }));
         Assert.True(host.Server.HasActiveSession);
@@ -123,17 +125,18 @@ public class ConnectionTests
     [Fact]
     public async Task SlowFingerprintConfirmation_LongerThanControllerConnectTimeout_StillConnects()
     {
-        await using var host = new TestHost(handshakeTimeout: TimeSpan.FromMilliseconds(300));
+        // 時限留餘裕給「確認後重新連線並登入」（CPU 滿載時 300 ms / 1 秒偶爾不夠，T-037）
+        await using var host = new TestHost(handshakeTimeout: TimeSpan.FromMilliseconds(1500));
         var options = host.Options(confirm: (_, _) =>
         {
-            Thread.Sleep(2500); // 比控制端連線時限（1 秒）還久
+            Thread.Sleep(4000); // 比控制端連線時限（2 秒）與被控端握手時限都久
             return true;
         });
         options = new ControllerConnectOptions
         {
             Host = options.Host, Port = options.Port, Username = options.Username, Password = options.Password,
             KnownHosts = options.KnownHosts, ConfirmNewHost = options.ConfirmNewHost,
-            ConnectTimeout = TimeSpan.FromSeconds(1),
+            ConnectTimeout = TimeSpan.FromSeconds(2),
         };
         await using var session = await ControllerClient.ConnectAsync(options);
         Assert.True(host.Server.HasActiveSession);
@@ -152,10 +155,10 @@ public class ConnectionTests
     [Fact]
     public async Task ProbeThenTrust_ThenConnect_DoesNotAskAgain()
     {
-        await using var host = new TestHost(handshakeTimeout: TimeSpan.FromMilliseconds(300));
+        await using var host = new TestHost(handshakeTimeout: TimeSpan.FromMilliseconds(1500));
         var known = new KnownHostsStore(null);
         string fp = await ControllerClient.ProbeFingerprintAsync("127.0.0.1", host.Server.Port);
-        await Task.Delay(1000); // 使用者慢慢核對，超過被控端握手時限
+        await Task.Delay(2500); // 使用者慢慢核對，超過被控端握手時限
         known.Trust(KnownHostsStore.KeyFor("127.0.0.1", host.Server.Port), fp);
 
         bool asked = false;

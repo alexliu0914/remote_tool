@@ -29,10 +29,10 @@ public class H264PathTests
     private sealed class FakeDecoder : IVideoDecoder
     {
         public string Name => "假 H.264 解碼";
-        public bool Decode(byte[] data, int width, int height, FrameBuffer target)
+        public bool Decode(ReadOnlySpan<byte> data, int width, int height, FrameBuffer target)
         {
             target.Resize(width, height);
-            data.AsSpan(0, width * height * 4).CopyTo(target.Pixels);
+            data[..(width * height * 4)].CopyTo(target.Pixels);
             return true;
         }
         public void Dispose() { }
@@ -239,7 +239,7 @@ public class ColorAndAssemblerTests
         Assert.False(a.Add(parts[0], out _, out _));
         Assert.False(a.Add(parts[1], out _, out _));
         Assert.True(a.Add(parts[2], out var first, out var data));
-        Assert.Equal(frame.Data.ToArray(), data);
+        Assert.Equal(frame.Data.ToArray(), data.ToArray());
         Assert.True(first!.IsKeyframe);
     }
 
@@ -263,7 +263,7 @@ public class ColorAndAssemblerTests
         a.Add(new VideoFrame(1, 64, 64, true, 0, 2, shared.AsMemory(0, 50), "h264"), out _, out _);
         shared.AsSpan().Fill(9); // 模擬讀取緩衝區被下一個封包覆寫
         Assert.True(a.Add(new VideoFrame(1, 64, 64, true, 1, 2, new byte[50], "h264"), out _, out var data));
-        Assert.All(data!.Take(50), b => Assert.Equal(0, b));
+        Assert.All(data.ToArray().Take(50), b => Assert.Equal(0, b));
     }
 
     [Fact]

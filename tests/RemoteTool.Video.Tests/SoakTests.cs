@@ -154,7 +154,7 @@ public class SoakTests(ITestOutputHelper output)
     private sealed class SizeOnlyDecoder : IVideoDecoder
     {
         public string Name => "假解碼";
-        public bool Decode(byte[] data, int width, int height, FrameBuffer target)
+        public bool Decode(ReadOnlySpan<byte> data, int width, int height, FrameBuffer target)
         {
             target.Resize(width, height);
             return true;

@@ -286,7 +286,7 @@ Host 啟動時會先「檢查 H.264 編碼器」：實際建立並試編一張�
 | HD-03 | 連續拖動視窗時看工作管理員 Controller 的 CPU；再關閉控制端，在 PowerShell 執行 `$env:REMOTETOOL_DECODER="sw"` 後用**同一個視窗**執行 `& $C`，重做一次 | **兩個數字都回報**（硬體 / 軟體解碼的 Controller CPU）。測完執行 `Remove-Item Env:REMOTETOOL_DECODER` 還原 |
 | HD-04 | 變更被控端解析度，之後改回 | 畫面正確恢復 |
 | HD-05 | Host 用 `& $H --test-drop-video 20` | 每次重連後畫面正常 |
-| HD-06 | 連線 10 分鐘並持續拖動視窗，開工作管理員看 Controller 記憶體 | 記下第 1、5、10 分鐘的數字；應持平 |
+| HD-06 | ① 連線後**不要改變畫面視窗大小**，持續拖動被控端視窗 **20 分鐘** ② 之後執行 `Get-Content $env:LOCALAPPDATA\RemoteTool\controller.log -Tail 40`，找出「記憶體：…」各行 | 控制端每 60 秒寫一行：私有、GC 已提交、原生（估計）。**請回報第 1、5、10、15、20 分鐘的三個數字**。判定：「原生（估計）」前幾分鐘後持平、「GC 已提交」不持續增加。（放大視窗會使原生記憶體瞬間增加，屬交換鏈緩衝區，故測試中請勿改變視窗大小） |
 
 ## 五、雙機實測（兩台實體 Windows 11）
 

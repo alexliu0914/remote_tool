@@ -31,7 +31,7 @@ public interface IVideoDecoder : IDisposable
 {
     string Name { get; }
     /// <summary>解一張畫面寫入 <paramref name="target"/>（BGRA）。解碼器暫時沒有輸出時回傳 false。</summary>
-    bool Decode(byte[] data, int width, int height, FrameBuffer target);
+    bool Decode(ReadOnlySpan<byte> data, int width, int height, FrameBuffer target);
 }
 
 /// <summary>
@@ -40,15 +40,20 @@ public interface IVideoDecoder : IDisposable
 /// </summary>
 public sealed class VideoFrameAssembler
 {
-    private readonly List<byte[]> _chunks = new();
+    // 重複使用的組裝緩衝區：避免每張畫面配置新陣列（HD-06）。輸出只在下一次 Add 之前有效。
+    private byte[] _buffer = new byte[256 * 1024];
+    private int _length;
+    private int _received;
     private VideoFrame? _first;
-    private int _total;
 
-    /// <summary>加入一塊；一張畫面收齊時回傳 true 並輸出完整資料。</summary>
-    public bool Add(VideoFrame chunk, out VideoFrame? first, out byte[]? data)
+    /// <summary>
+    /// 加入一塊；一張畫面收齊時回傳 true 並輸出完整資料。
+    /// <paramref name="data"/> 指向內部重複使用的緩衝區，<b>只在下一次呼叫 Add 之前有效</b>。
+    /// </summary>
+    public bool Add(VideoFrame chunk, out VideoFrame? first, out ReadOnlyMemory<byte> data)
     {
         first = null;
-        data = null;
+        data = default;
         if (chunk.ChunkCount < 1 || chunk.ChunkCount > ProtocolInfo.MaxVideoChunks
             || chunk.ChunkIndex < 0 || chunk.ChunkIndex >= chunk.ChunkCount)
             throw new InvalidDataException($"VideoFrame 分塊編號不合法（{chunk.ChunkIndex}/{chunk.ChunkCount}）");
@@ -58,34 +63,44 @@ public sealed class VideoFrameAssembler
 
         if (chunk.ChunkIndex == 0)
         {
-            _chunks.Clear();
-            _total = 0;
+            _length = 0;
+            _received = 0;
             _first = chunk;
         }
-        else if (_first is null || chunk.FrameId != _first.FrameId || chunk.ChunkIndex != _chunks.Count
+        else if (_first is null || chunk.FrameId != _first.FrameId || chunk.ChunkIndex != _received
                  || chunk.ChunkCount != _first.ChunkCount || chunk.Width != _first.Width || chunk.Height != _first.Height)
         {
-            _chunks.Clear();
-            _first = null;
+            Reset();
             throw new InvalidDataException("VideoFrame 分塊順序或內容不一致");
         }
 
-        _total += chunk.Data.Length;
-        if (_total > ProtocolInfo.MaxVideoFrameBytes)
+        int newLength = _length + chunk.Data.Length;
+        if (newLength > ProtocolInfo.MaxVideoFrameBytes)
         {
-            _chunks.Clear();
-            _first = null;
+            Reset();
             throw new InvalidDataException("VideoFrame 超過大小上限");
         }
-        _chunks.Add(chunk.Data.ToArray()); // Data 可能指向重複使用的讀取緩衝區，必須複製
+        if (newLength > _buffer.Length)
+            Array.Resize(ref _buffer, Math.Min(ProtocolInfo.MaxVideoFrameBytes, Math.Max(newLength, _buffer.Length * 2)));
+        // Data 可能指向重複使用的讀取緩衝區，必須立即複製
+        chunk.Data.Span.CopyTo(_buffer.AsSpan(_length));
+        _length = newLength;
+        _received++;
 
-        if (_chunks.Count < chunk.ChunkCount) return false;
+        if (_received < chunk.ChunkCount) return false;
 
-        data = _chunks.Count == 1 ? _chunks[0] : _chunks.SelectMany(c => c).ToArray();
+        data = _buffer.AsMemory(0, _length);
         first = _first;
-        _chunks.Clear();
         _first = null;
+        _received = 0;
         return true;
+    }
+
+    private void Reset()
+    {
+        _first = null;
+        _length = 0;
+        _received = 0;
     }
 
     /// <summary>把一張編碼畫面切成 VideoFrame 封包（切片，不複製資料）。</summary>
@@ -158,7 +173,7 @@ public sealed class VideoReceiver : IDisposable
                 CurrentFormat = decoder.Name;
                 try
                 {
-                    if (!decoder.Decode(data!, first!.Width, first.Height, _decoded)) return false;
+                    if (!decoder.Decode(data.Span, first!.Width, first.Height, _decoded)) return false;
                 }
                 catch (Exception) when (!first!.IsKeyframe)
                 {

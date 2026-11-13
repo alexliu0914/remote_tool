@@ -164,7 +164,7 @@ public sealed class MfH264Decoder : IVideoDecoder
         _outputSize = w > 0 && h > 0 ? (int)(Math.Max(stride, w) * h * 3 / 2) : 0;
     }
 
-    public bool Decode(byte[] data, int width, int height, FrameBuffer target)
+    public bool Decode(ReadOnlySpan<byte> data, int width, int height, FrameBuffer target)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         EnsureConfigured(width, height);
@@ -295,7 +295,7 @@ public sealed class ResilientH264Decoder : IVideoDecoder
 
     public string Name => _current.Name;
 
-    public bool Decode(byte[] data, int width, int height, FrameBuffer target)
+    public bool Decode(ReadOnlySpan<byte> data, int width, int height, FrameBuffer target)
     {
         try
         {

@@ -14,6 +14,8 @@
 
   <ItemGroup>
     <PackageReference Include="Vortice.MediaFoundation" Version="3.8.3" />
+    <!-- A2b-2：硬體解碼需要 D3D11 裝置管理員 -->
+    <PackageReference Include="Vortice.Direct3D11" Version="3.8.3" />
   </ItemGroup>
 
   <ItemGroup>

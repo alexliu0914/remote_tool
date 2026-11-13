@@ -16,9 +16,11 @@ public partial class LoginWindow : Window
     /// <summary>這台電腦能否解 H.264（第一次連線時檢查一次）。</summary>
     private static readonly Lazy<(bool Ok, string Detail)> H264Decoder = new(() =>
     {
+        bool hw = MfH264Decoder.IsAvailable(out string hwDetail, hardware: true);
+        DiagnosticLog.Write(hw ? $"硬體 H.264 解碼器可用：{hwDetail}" : $"硬體 H.264 解碼器不可用：{hwDetail}");
         bool ok = MfH264Decoder.IsAvailable(out string detail);
-        DiagnosticLog.Write(ok ? $"H.264 解碼器可用：{detail}" : $"H.264 解碼器不可用：{detail}");
-        return (ok, detail);
+        DiagnosticLog.Write(ok ? $"軟體 H.264 解碼器可用：{detail}" : $"軟體 H.264 解碼器不可用：{detail}");
+        return (ok || hw, hw ? hwDetail : detail);
     });
 
     /// <summary>建置版本（含 git commit 前 7 碼），顯示在標題列以確認是否為最新建置。</summary>
@@ -111,7 +113,7 @@ public partial class LoginWindow : Window
         RemoteWindow? remote = null;
         ControllerSession? session = null;
         var h264 = await Task.Run(() => H264Decoder.Value);
-        var receiver = new VideoReceiver(canvas, h264.Ok ? () => new MfH264Decoder() : null);
+        var receiver = new VideoReceiver(canvas, h264.Ok ? () => new ResilientH264Decoder(m => DiagnosticLog.Write(m)) : null);
         long lastKeyframeRequest = 0;
         try
         {

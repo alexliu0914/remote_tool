@@ -106,7 +106,7 @@ DXGI Desktop Duplication（主螢幕）
 DXGI → BGRA → (縮放) → 裁為偶數寬高 → BGRA→NV12（CPU）
   → Media Foundation H.264 編碼（硬體非同步 MFT 優先 → 軟體 MFT，D-052）
   → Annex B → VideoFrame 分塊（≤512 KB）──────────────────▶ 組裝（檢查順序、塊數、大小）
-                                                            → MF H.264 解碼（A2a：軟體）→ NV12→BGRA（CPU，裁掉對齊列）
+                                                            → MF H.264 解碼（硬體 DXVA 優先 → 軟體，D-055）→ NV12→BGRA（CPU，依 pitch 裁掉對齊列）
                                                             → FrameCanvas → D3D11 / Direct2D（HwndHost 畫面區，A2b）
                                                               （D3D11 無法使用時 → WPF WriteableBitmap）
 ```

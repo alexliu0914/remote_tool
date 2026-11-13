@@ -66,10 +66,12 @@
 | T-033 | 2026-11-13 | 本筆提交 | 雲端 Linux（.NET 10） | Claude | A2b：HwndHost 畫面區（D3D11 / Direct2D / DirectWrite）、子視窗鍵鼠接收、OLE 拖放目標；交叉建置、win-x64 發佈含 Vortice.Direct2D1 / Direct3D11 / DXGI；全部回歸 | PASS | 165/165。**WPF、HwndHost、D3D11、OLE 拖放只能在 Windows 實機驗證**（TESTING.md 4.7 G4-01～G4-13） |
 | T-034 | 2026-11-13 | 2b4c3c1 之建置 | 使用者 Windows 11 實機，單機 | 使用者 | A2b：TESTING.md 4.7 G4-01～G4-13 | 部分 **FAIL** | G4-01～G4-04、G4-06、G4-11、G4-12 **PASS**（D3D11 顯示、縮放與捲軸、滑鼠座標換算含 125% / 150% 縮放、滑鼠按鍵與滾輪、注音輸入、重連覆蓋訊息）。G4-05 **FAIL**：Tab / 方向鍵讓焦點跳到工具列（WPF KeyboardNavigation 先處理）。G4-07～G4-10 **無法判定**：拖放訊息與滑鼠訊息共用一行，立刻被蓋掉。G4-13 **未測**（使用者不清楚記錄檔位置）。修正：畫面區覆寫 HwndHost.TranslateAccelerator，按鍵訊息直接翻譯並送給子視窗、不交給 WPF；拖放結果改為獨立一行並保留；TESTING.md 補記錄檔路徑 |
 | T-035 | 2026-11-13 | 8bbb38a 之建置 | 使用者 Windows 11 實機，單機 | 使用者 | A2b 重測：G4-05、G4-07～G4-10、G4-13 | PASS | Tab / 方向鍵 / 功能鍵 / Ctrl、Alt 組合鍵留在畫面區；檔案、資料夾、多選拖入數量正確，拖到工具列不觸發；controller.log 有 D3D11 顯示卡與輸入統計。連同 T-034，**4.7 G4-01～G4-13 單機全部通過** |
+| T-036 | 2026-11-13 | 本筆提交 | 雲端 Linux（.NET 10） | Claude | A2b-2 控制端硬體解碼（DXVA + IMF2DBuffer 讀回）與硬體→軟體自動切換：交叉建置、全部回歸 | PASS | 165/165。**硬體解碼只能在 Windows 實機驗證**（TESTING.md 4.8 HD-01～HD-06） |
 
 ## 4. 尚待人工執行
 
 | 項目 | 對應 | 需要 | 步驟 |
 | --- | --- | --- | --- |
 | V-11 縮小 | G0-02 | 寬度大於 1920 的螢幕 | [TESTING.md](TESTING.md) 4.4 V-11 |
+| A2b-2 硬體解碼 | G0-02 | 一台 Windows 11 | [TESTING.md](TESTING.md) 4.8 HD-01～HD-06 |
 | 雙機驗證 | G0-01、G0-02 | 兩台實體 Windows 11、同一區域網路 | [TESTING.md](TESTING.md) 第五節 5.6 |

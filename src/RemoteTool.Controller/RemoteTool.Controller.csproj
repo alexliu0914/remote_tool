@@ -6,9 +6,17 @@
     <UseWPF>true</UseWPF>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <AssemblyName>Controller</AssemblyName>
     <RootNamespace>RemoteTool.Controller</RootNamespace>
   </PropertyGroup>
+
+  <ItemGroup>
+    <!-- A2b：畫面區以 HwndHost 嵌入 D3D11 交換鏈，Direct2D 繪製（PLAN §4、D-013） -->
+    <PackageReference Include="Vortice.Direct3D11" Version="3.8.3" />
+    <PackageReference Include="Vortice.DXGI" Version="3.8.3" />
+    <PackageReference Include="Vortice.Direct2D1" Version="3.8.3" />
+  </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\RemoteTool.Protocol\RemoteTool.Protocol.csproj" />

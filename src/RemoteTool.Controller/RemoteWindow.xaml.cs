@@ -2,6 +2,7 @@ using System.IO;
 using System.ComponentModel;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
@@ -12,19 +13,23 @@ using RemoteTool.Video;
 namespace RemoteTool.Controller;
 
 /// <summary>
-/// 遠端畫面視窗（A1 PoC：WriteableBitmap，見 D-028）。
-/// 背景執行緒把封包解到 <see cref="FrameCanvas"/>；每張畫面完成時累積變動範圍，
-/// UI 執行緒只把變動範圍複製進 WriteableBitmap。UI 跟不上時多張合併成一次更新，不排隊。
+/// 遠端畫面視窗。A2b 起畫面區為 HwndHost 嵌入的 Win32 子視窗，以 D3D11 / Direct2D 繪製（D-013），
+/// 鍵鼠與拖放由該視窗自己接收（G0-04）；D3D11 無法建立時改用 WPF WriteableBitmap 顯示。
+/// 背景執行緒把封包解到 <see cref="FrameCanvas"/>；UI 執行緒只上傳變動範圍，跟不上時多張合併成一次，不排隊。
 /// </summary>
 public partial class RemoteWindow : Window
 {
     private readonly ControllerSession _session;
+    private readonly VideoReceiver _receiver;
     private readonly FrameCanvas _canvas;
     private readonly DispatcherTimer _statsTimer;
     private readonly object _dirtyGate = new();
+    private readonly RemoteScreenHost _screen = new();
     private PixelRect _pendingDirty;
     private bool _renderScheduled;
+    private bool _useD3D;
     private WriteableBitmap? _bitmap;
+    private int _frameWidth, _frameHeight;
     private int _framesSinceTick;
     private long _bytesAtLastTick;
     private bool _closing;
@@ -32,11 +37,17 @@ public partial class RemoteWindow : Window
     private bool _refreshRequested;
     private bool _pendingKeyframe;
     private string _note = "";
+    private string _fileNote = "";
+    private string _stats = "等待畫面…";
+    private string? _overlay;
+
+    // G0-04 驗證：畫面區收到的輸入統計
+    private long _mouseEvents, _keyEvents, _drops;
+    private string _lastInput = "";
+    private long _lastInputUiUpdate;
 
     /// <summary>非 null 表示因連線中斷而關閉，內容為原因。</summary>
     public string? EndReason { get; private set; }
-
-    private readonly VideoReceiver _receiver;
 
     internal RemoteWindow(ControllerSession session, VideoReceiver receiver)
     {
@@ -46,9 +57,26 @@ public partial class RemoteWindow : Window
         _canvas = receiver.Canvas;
         Title = $"RemoteTool — {session.HostKey}";
 
+        HostContainer.Child = _screen;
+        _screen.InputReceived += OnScreenInput;
+        _screen.FilesDropped += OnFilesDropped;
+        _screen.RedrawRequested += () => OnFrameCompleted(default);
+        HostContainer.SizeChanged += (_, _) => UpdateScrollBars();
+
         _statsTimer = new DispatcherTimer(TimeSpan.FromSeconds(1), DispatcherPriority.Background, OnStatsTick, Dispatcher);
         Loaded += (_, _) =>
         {
+            _useD3D = _screen.Renderer is not null;
+            if (!_useD3D)
+            {
+                D3DPanel.Visibility = Visibility.Collapsed;
+                WpfPanel.Visibility = Visibility.Visible;
+                _note = $"顯示：WPF（D3D11 無法使用：{_screen.RendererError}）";
+            }
+            else
+            {
+                DiagnosticLog.Write($"畫面區：D3D11 / Direct2D（{_screen.Renderer!.AdapterName}）");
+            }
             _statsTimer.Start();
             // 視窗開啟前收到的畫面整張繪出
             lock (_canvas.SyncRoot)
@@ -62,21 +90,28 @@ public partial class RemoteWindow : Window
         _ = WatchSessionAsync();
     }
 
-    private string _fileNote = "";
+    // ------------------------------------------------------------------ 子連線狀態
 
     private void OnSubChannelState(ChannelKind role, SubChannelState state, string? detail)
     {
         DiagnosticLog.Write($"{role} 子連線：{state}{(detail is null ? "" : "（" + detail + "）")}");
         if (role == ChannelKind.Video)
         {
-            VideoOverlay.Visibility = state == SubChannelState.Connected ? Visibility.Collapsed : Visibility.Visible;
-            VideoRetryButton.Visibility = state == SubChannelState.Failed ? Visibility.Visible : Visibility.Collapsed;
-            VideoOverlayText.Text = state switch
+            _overlay = state switch
             {
                 SubChannelState.Reconnecting => "畫面重新連線中…\n（目前顯示的是最後一張畫面，非即時）",
-                SubChannelState.Failed => $"畫面連線失敗：{detail}\n控制連線仍在，可按下方按鈕重試。",
-                _ => "",
+                SubChannelState.Failed => $"畫面連線失敗：{detail}\n控制連線仍在，可按工具列的「重試畫面連線」。",
+                _ => null,
             };
+            VideoRetryButton.Visibility = state == SubChannelState.Failed ? Visibility.Visible : Visibility.Collapsed;
+            // WPF 備援路徑用 WPF 覆蓋層；D3D 路徑在繪製時畫上去（WPF 無法疊在 HwndHost 上）
+            VideoOverlay.Visibility = _overlay is null ? Visibility.Collapsed : Visibility.Visible;
+            VideoOverlayText.Text = _overlay ?? "";
+            if (_screen.Renderer is { } r)
+            {
+                r.Overlay = _overlay;
+                OnFrameCompleted(default);
+            }
         }
         else
         {
@@ -105,7 +140,9 @@ public partial class RemoteWindow : Window
         });
     }
 
-    /// <summary>背景執行緒呼叫：一張畫面已解到畫布。</summary>
+    // ------------------------------------------------------------------ 繪製
+
+    /// <summary>背景執行緒呼叫：一張畫面已解到畫布（dirty 為空表示只需重畫）。</summary>
     internal void OnFrameCompleted(PixelRect dirty, bool isKeyframe = false)
     {
         lock (_dirtyGate)
@@ -137,6 +174,31 @@ public partial class RemoteWindow : Window
             UpdateStatus();
         }
 
+        if (_useD3D && _screen.Renderer is { } renderer)
+        {
+            bool sizeChanged;
+            lock (_canvas.SyncRoot)
+            {
+                var buffer = _canvas.Buffer;
+                if (buffer.Width > 0)
+                {
+                    if (renderer.DeviceRecreated)
+                    {
+                        dirty = new PixelRect(0, 0, buffer.Width, buffer.Height);
+                        renderer.DeviceRecreated = false;
+                    }
+                    if (!dirty.IsEmpty || renderer.FrameWidth != buffer.Width) renderer.Upload(buffer, dirty);
+                }
+                sizeChanged = buffer.Width != _frameWidth || buffer.Height != _frameHeight;
+                _frameWidth = buffer.Width;
+                _frameHeight = buffer.Height;
+            }
+            if (sizeChanged) UpdateScrollBars();
+            renderer.Draw();
+            if (!dirty.IsEmpty) _framesSinceTick++;
+            return;
+        }
+
         lock (_canvas.SyncRoot)
         {
             var buffer = _canvas.Buffer;
@@ -150,9 +212,10 @@ public partial class RemoteWindow : Window
                 ApplyFit();
                 dirty = new PixelRect(0, 0, buffer.Width, buffer.Height);
             }
+            _frameWidth = buffer.Width;
+            _frameHeight = buffer.Height;
 
             if (dirty.IsEmpty) return;
-            // 防禦：裁到畫面範圍內
             int x = Math.Clamp(dirty.X, 0, buffer.Width), y = Math.Clamp(dirty.Y, 0, buffer.Height);
             int w = Math.Min(dirty.Width, buffer.Width - x), h = Math.Min(dirty.Height, buffer.Height - y);
             if (w <= 0 || h <= 0) return;
@@ -162,7 +225,111 @@ public partial class RemoteWindow : Window
         _framesSinceTick++;
     }
 
-    private string _stats = "等待畫面…";
+    // ------------------------------------------------------------------ 顯示模式與捲軸
+
+    private void ApplyFit()
+    {
+        FitButton.Content = _fit ? "顯示：符合視窗" : "顯示：原尺寸";
+        ScreenImage.Stretch = _fit ? Stretch.Uniform : Stretch.None;
+        Scroller.HorizontalScrollBarVisibility = _fit ? ScrollBarVisibility.Disabled : ScrollBarVisibility.Auto;
+        Scroller.VerticalScrollBarVisibility = _fit ? ScrollBarVisibility.Disabled : ScrollBarVisibility.Auto;
+        if (_screen.Renderer is { } r) r.Fit = _fit;
+        UpdateScrollBars();
+        OnFrameCompleted(default);
+    }
+
+    private void OnFitToggle(object sender, RoutedEventArgs e)
+    {
+        _fit = !_fit;
+        ApplyFit();
+    }
+
+    /// <summary>原尺寸時依畫面區大小（實際像素）設定捲軸範圍。</summary>
+    private void UpdateScrollBars()
+    {
+        if (!_useD3D || _screen.Renderer is not { } r) return;
+        var dpi = VisualTreeHelper.GetDpi(this);
+        int viewW = (int)(HostContainer.ActualWidth * dpi.DpiScaleX), viewH = (int)(HostContainer.ActualHeight * dpi.DpiScaleY);
+        bool needH = !_fit && _frameWidth > viewW, needV = !_fit && _frameHeight > viewH;
+        HScroll.Visibility = needH ? Visibility.Visible : Visibility.Collapsed;
+        VScroll.Visibility = needV ? Visibility.Visible : Visibility.Collapsed;
+        HScroll.Maximum = Math.Max(0, _frameWidth - viewW);
+        VScroll.Maximum = Math.Max(0, _frameHeight - viewH);
+        HScroll.ViewportSize = viewW;
+        VScroll.ViewportSize = viewH;
+        HScroll.LargeChange = viewW * 0.9;
+        VScroll.LargeChange = viewH * 0.9;
+        HScroll.SmallChange = VScroll.SmallChange = 40;
+        if (!needH) HScroll.Value = 0;
+        if (!needV) VScroll.Value = 0;
+        r.ScrollX = (int)HScroll.Value;
+        r.ScrollY = (int)VScroll.Value;
+    }
+
+    private void OnScroll(object sender, ScrollEventArgs e)
+    {
+        if (_screen.Renderer is not { } r) return;
+        r.ScrollX = (int)HScroll.Value;
+        r.ScrollY = (int)VScroll.Value;
+        OnFrameCompleted(default);
+    }
+
+    // ------------------------------------------------------------------ G0-04：畫面區輸入與拖放
+
+    private void OnScreenInput(ScreenInput input)
+    {
+        if (input.Kind.StartsWith("按鍵") || input.Kind == "字元") _keyEvents++;
+        else if (input.Kind != "焦點") _mouseEvents++;
+
+        string where = input.RemoteX is int rx ? $" → 遠端 ({rx},{input.RemoteY})" : "";
+        _lastInput = $"{input.Kind}：{input.Detail}{where}";
+
+        // 滑鼠移動很頻繁，畫面最多每 100 毫秒更新一次；其他事件立即更新
+        long now = Environment.TickCount64;
+        if (input.Kind == "滑鼠移動" && now - _lastInputUiUpdate < 100) return;
+        _lastInputUiUpdate = now;
+        UpdateInputText();
+    }
+
+    private void UpdateInputText()
+        => InputText.Text = $"畫面區輸入（G0-04 驗證，尚未送到遠端）：{_lastInput}　｜　滑鼠 {_mouseEvents} 次、鍵盤 {_keyEvents} 次、拖放 {_drops} 次";
+
+    private async void OnFilesDropped(IReadOnlyList<string> paths, int? remoteX, int? remoteY)
+    {
+        _drops++;
+        int files = paths.Count(File.Exists), folders = paths.Count(Directory.Exists);
+        _lastInput = $"拖入 {files} 個檔案、{folders} 個資料夾（計算中…）";
+        UpdateInputText();
+
+        // 資料夾內的檔案數在背景計算（上限 100,000，避免拖入整顆磁碟時卡住）
+        long total = await Task.Run(() => CountFiles(paths, 100_000));
+        string where = remoteX is int rx ? $"，放在遠端 ({rx},{remoteY})" : "";
+        _lastInput = $"拖入 {files} 個檔案、{folders} 個資料夾（共 {total:N0} 個檔案{(total >= 100_000 ? " 以上" : "")}）{where}；傳輸於 M3 實作";
+        UpdateInputText();
+        DiagnosticLog.Write($"畫面區拖放：{files} 個檔案、{folders} 個資料夾、共 {total} 個檔案；第一項：{paths.FirstOrDefault()}");
+    }
+
+    private static long CountFiles(IReadOnlyList<string> paths, long limit)
+    {
+        long count = 0;
+        foreach (var p in paths)
+        {
+            if (File.Exists(p)) count++;
+            else if (Directory.Exists(p))
+            {
+                try
+                {
+                    foreach (var _ in Directory.EnumerateFiles(p, "*", new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true }))
+                        if (++count >= limit) return count;
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+            }
+            if (count >= limit) break;
+        }
+        return count;
+    }
+
+    // ------------------------------------------------------------------ 狀態列
 
     private void OnStatsTick(object? sender, EventArgs e)
     {
@@ -170,9 +337,10 @@ public partial class RemoteWindow : Window
         double kbps = (bytes - _bytesAtLastTick) * 8 / 1000.0;
         _bytesAtLastTick = bytes;
 
-        string size = _bitmap is null ? "—" : $"{_bitmap.PixelWidth}×{_bitmap.PixelHeight}";
+        string size = _frameWidth == 0 ? "—" : $"{_frameWidth}×{_frameHeight}";
         string rtt = _session.LastRoundTrip is { } t ? $"{t.TotalMilliseconds:0} ms" : "—";
-        _stats = $"{size}    {_framesSinceTick} FPS    {kbps:0} kbps    心跳 {rtt}    {_receiver.CurrentFormat}    （只能看，尚無鍵鼠）";
+        string display = _useD3D ? "D3D11" : "WPF";
+        _stats = $"{size}    {_framesSinceTick} FPS    {kbps:0} kbps    心跳 {rtt}    {_receiver.CurrentFormat}    顯示：{display}";
         _framesSinceTick = 0;
         UpdateStatus();
     }
@@ -186,20 +354,6 @@ public partial class RemoteWindow : Window
         int v = _session.GetReconnectCount(ChannelKind.Video), f = _session.GetReconnectCount(ChannelKind.File);
         if (v + f > 0) parts.Add($"已重連：畫面 {v} 次、檔案 {f} 次");
         StatusText.Text = string.Join("    ｜ ", parts);
-    }
-
-    private void ApplyFit()
-    {
-        ScreenImage.Stretch = _fit ? Stretch.Uniform : Stretch.None;
-        Scroller.HorizontalScrollBarVisibility = _fit ? ScrollBarVisibility.Disabled : ScrollBarVisibility.Auto;
-        Scroller.VerticalScrollBarVisibility = _fit ? ScrollBarVisibility.Disabled : ScrollBarVisibility.Auto;
-        FitButton.Content = _fit ? "顯示：符合視窗" : "顯示：原尺寸";
-    }
-
-    private void OnFitToggle(object sender, RoutedEventArgs e)
-    {
-        _fit = !_fit;
-        ApplyFit();
     }
 
     private async void OnRefresh(object sender, RoutedEventArgs e)
@@ -225,6 +379,7 @@ public partial class RemoteWindow : Window
         if (_closing) return;
         _closing = true;
         _statsTimer.Stop();
+        DiagnosticLog.Write($"畫面區輸入統計：滑鼠 {_mouseEvents} 次、鍵盤 {_keyEvents} 次、拖放 {_drops} 次");
         await _session.DisposeAsync();
         _receiver.Dispose();
     }

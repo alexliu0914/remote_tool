@@ -36,7 +36,7 @@
 | D-025 | 2026-11-11 | 雙機驗證可延後、不阻擋開發，但必須在 Spike 0 最終驗收前完成；未執行的雙機測試不得以單機結果代替 | USER | 有效 |
 | D-026 | 2026-11-11 | A1 可用未壓縮或簡單壓縮畫面證明整條路徑，但須限制解析度、FPS 與佇列大小；僅作 PoC，不作正式效能基線 | USER | 有效 |
 | D-027 | 2026-11-11 | A1 影像 PoC 格式：畫面切成 64×64 區塊，只送與上一張不同的區塊，每塊以 Deflate 壓縮（`VideoTileUpdate`，類型 43）。預設上限：寬 1920（超過以整數倍縮小）、10 FPS；**不設佇列**，傳送未完成時不擷取下一張（永遠送最新畫面）。A2 改為 H.264 後此格式保留作為除錯備援或移除 | DEV | 待確認 |
-| D-028 | 2026-11-11 | A1 控制端顯示用 WPF `WriteableBitmap`；HwndHost + D3D11 於 A2（搭配 H.264 解碼）導入，G0-04 以該版本驗證 | DEV | 待確認 |
+| D-028 | 2026-11-11 | A1 控制端顯示用 WPF `WriteableBitmap`；HwndHost + D3D11 於 A2（搭配 H.264 解碼）導入，G0-04 以該版本驗證 | DEV | 已被 D-054 取代（WriteableBitmap 保留為備援） |
 | D-029 | 2026-11-11 | A1 只擷取主螢幕，不含游標；多螢幕與游標於 A3 | DEV | 待確認 |
 | D-030 | 2026-11-11 | DXGI / D3D11 以 Vortice.Windows（Vortice.Direct3D11、Vortice.DXGI）封裝呼叫，不自行撰寫 COM interop | DEV | 待確認 |
 | D-031 | 2026-11-11 | A1 起 Controller 改為 WPF 視窗程式（登入視窗 + 遠端畫面視窗），取代 M1 第一步的主控台版本；`--forget` 改為登入視窗上的按鈕 | DEV | 待確認 |
@@ -62,4 +62,5 @@
 | D-051 | 2026-11-12 | PLAN §5.1「畫面落後時清空待送佇列並要求 IDR」：因採零佇列（一張送完才擷取下一張）且每張編碼結果都完整送出，參考鏈不會因丟幀損壞，此情境不會發生；落後時以降低擷取頻率處理。解碼失敗時控制端每秒最多要求一次關鍵幀（PLAN_GAPS G-10） | DEV | 待確認 |
 | D-052 | 2026-11-12 | 硬體 H.264 編碼（A2a-2）：列舉硬體非同步 MFT，解鎖（MF_TRANSFORM_ASYNC_UNLOCK）後以專用執行緒接收 NeedInput / HaveOutput 事件，輸入為系統記憶體 NV12（暫不使用 D3D11 裝置管理員）。`ResilientH264Encoder`：Auto 模式硬體優先，硬體在建立或串流中失敗時改用軟體（不退回區塊差異）；Host 啟動時實際試編一張畫面探測。`--codec auto|h264|h264-hw|h264-sw|tiles` | DEV（依 PLAN §4） | 有效（Intel Quick Sync 實機通過，T-030、T-032） |
 | D-053 | 2026-11-12 | 編碼輸出記憶體（HW-06）：`EncodedFrame` 改為借自 ArrayPool 的緩衝區 + 長度，`VideoStreamer` 送出後歸還；`VideoFrame.Data` 改為 ReadOnlyMemory 以切片分塊不複製（MessagePack 線路格式仍為 bin，Protocol V1 不變）；接收端組裝時複製。`--memlog` 區分 GC 已提交與原生記憶體 | DEV | 有效（HW-06 原生記憶體持平，T-032） |
+| D-054 | 2026-11-12 | A2b 畫面區：`RemoteScreenHost`（HwndHost）建立 Win32 子視窗（視窗類別以 DefWindowProc 註冊，訊息由 HwndHost.WndProc 處理），D3D11 裝置 + DXGI flip-discard 交換鏈，Direct2D 縮放繪製（符合視窗：高品質三次插值；原尺寸：最近點並以 WPF 捲軸捲動），裝置遺失自動重建。重連覆蓋訊息以 DirectWrite 畫在 D3D 畫面內、重試按鈕移到工具列（WPF 無法疊在 HwndHost 上）。滑鼠 / 鍵盤由子視窗 WndProc 接收（WM_GETDLGCODE 要求所有按鍵），拖放以 OLE `RegisterDragDrop` + `IDropTarget` 讀取 CF_HDROP；座標依繪製位置換算為遠端座標。A2b 只顯示收到的輸入作為 G0-04 驗證，轉送於 B1、檔案傳輸於 M3。D3D11 無法建立時改用 WPF WriteableBitmap。硬體解碼（DXVA）於 A2b-2 | DEV（依 PLAN §4、D-013） | 待實機確認（G0-04） |
 

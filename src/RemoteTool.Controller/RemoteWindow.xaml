@@ -10,31 +10,54 @@
             <Separator />
             <Button Content="重新整理畫面" Click="OnRefresh" ToolTip="要求被控端重送完整畫面" />
             <Separator />
+            <!-- 畫面區為 Win32 子視窗，WPF 按鈕無法疊在上面，因此重試按鈕放在工具列 -->
+            <Button x:Name="VideoRetryButton" Content="重試畫面連線" Click="OnRetryVideo" Visibility="Collapsed" />
             <Button Content="中斷連線" Click="OnDisconnect" />
         </ToolBar>
 
         <StatusBar DockPanel.Dock="Bottom">
+            <StatusBar.ItemsPanel>
+                <ItemsPanelTemplate>
+                    <StackPanel Orientation="Vertical" />
+                </ItemsPanelTemplate>
+            </StatusBar.ItemsPanel>
             <StatusBarItem>
                 <TextBlock x:Name="StatusText" Text="等待畫面…" />
+            </StatusBarItem>
+            <StatusBarItem>
+                <TextBlock x:Name="InputText" Foreground="DimGray"
+                           Text="畫面區輸入（G0-04 驗證，尚未送到遠端）：點一下畫面區後移動滑鼠、按鍵，或從檔案總管拖入檔案" />
             </StatusBarItem>
         </StatusBar>
 
         <Grid>
-            <ScrollViewer x:Name="Scroller" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Disabled"
-                          Background="Black">
-                <Image x:Name="ScreenImage" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality"
-                       HorizontalAlignment="Center" VerticalAlignment="Center" />
-            </ScrollViewer>
+            <!-- A2b：D3D11 畫面區（HwndHost）與原尺寸時的捲軸 -->
+            <Grid x:Name="D3DPanel">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+                <Border x:Name="HostContainer" Background="Black" />
+                <ScrollBar x:Name="VScroll" Grid.Column="1" Orientation="Vertical" Visibility="Collapsed" Scroll="OnScroll" />
+                <ScrollBar x:Name="HScroll" Grid.Row="1" Orientation="Horizontal" Visibility="Collapsed" Scroll="OnScroll" />
+            </Grid>
 
-            <!-- Video 重連中 / 失敗：把最後一張畫面變暗並標示非即時（PLAN §3、§7） -->
-            <Border x:Name="VideoOverlay" Background="#B0000000" Visibility="Collapsed">
-                <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+            <!-- 備援：D3D11 無法使用時的 WPF 顯示（A1 / A2a 方式） -->
+            <Grid x:Name="WpfPanel" Visibility="Collapsed">
+                <ScrollViewer x:Name="Scroller" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Disabled"
+                              Background="Black">
+                    <Image x:Name="ScreenImage" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality"
+                           HorizontalAlignment="Center" VerticalAlignment="Center" />
+                </ScrollViewer>
+                <Border x:Name="VideoOverlay" Background="#B0000000" Visibility="Collapsed">
                     <TextBlock x:Name="VideoOverlayText" Foreground="White" FontSize="20" TextAlignment="Center"
-                               TextWrapping="Wrap" MaxWidth="600" />
-                    <Button x:Name="VideoRetryButton" Content="重試畫面連線" Margin="0,16,0,0" HorizontalAlignment="Center"
-                            Visibility="Collapsed" Click="OnRetryVideo" />
-                </StackPanel>
-            </Border>
+                               TextWrapping="Wrap" MaxWidth="600" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                </Border>
+            </Grid>
         </Grid>
     </DockPanel>
 </Window>

@@ -1,0 +1,173 @@
+using System.Runtime.InteropServices;
+using System.Windows.Interop;
+using static RemoteTool.Controller.NativeMethods;
+
+namespace RemoteTool.Controller;
+
+/// <summary>畫面區收到的輸入（G0-04 驗證；B1 起轉送到被控端）。</summary>
+internal sealed record ScreenInput(string Kind, string Detail, int? RemoteX = null, int? RemoteY = null);
+
+/// <summary>
+/// 畫面區（A2b，PLAN §4 / D-013）：以 HwndHost 嵌入 Win32 子視窗，D3D11 交換鏈直接繪製在這個視窗上。
+/// HwndHost 內的 WPF 收不到滑鼠、鍵盤與拖放，因此由這個視窗的 WndProc 與 RegisterDragDrop 自己處理。
+/// 建立 D3D11 失敗時 <see cref="Renderer"/> 為 null，由呼叫端改用 WPF 顯示。
+/// </summary>
+internal sealed class RemoteScreenHost : HwndHost
+{
+    private const string ClassName = "RemoteToolScreen";
+    private static bool _classRegistered;
+    private IntPtr _hwnd;
+    private FileDropTarget? _dropTarget;
+
+    public D3DRenderer? Renderer { get; private set; }
+    public string? RendererError { get; private set; }
+
+    /// <summary>畫面區收到輸入時（UI 執行緒）。</summary>
+    public event Action<ScreenInput>? InputReceived;
+    /// <summary>從檔案總管拖入檔案或資料夾時（UI 執行緒）：路徑清單與放下位置（遠端座標，可能為 null）。</summary>
+    public event Action<IReadOnlyList<string>, int?, int?>? FilesDropped;
+    /// <summary>需要重畫（大小改變、重新取得裝置）。</summary>
+    public event Action? RedrawRequested;
+
+    protected override HandleRef BuildWindowCore(HandleRef hwndParent)
+    {
+        IntPtr instance = GetModuleHandle(null);
+        if (!_classRegistered)
+        {
+            // 視窗程序用 DefWindowProc；HwndHost 會把訊息轉給下面的 WndProc 覆寫
+            var wc = new WNDCLASSEX
+            {
+                cbSize = Marshal.SizeOf<WNDCLASSEX>(),
+                style = CS_DBLCLKS,
+                lpfnWndProc = GetProcAddress(GetModuleHandle("user32.dll"), "DefWindowProcW"),
+                hInstance = instance,
+                hCursor = LoadCursor(IntPtr.Zero, 32512 /* IDC_ARROW */),
+                lpszClassName = ClassName,
+            };
+            RegisterClassEx(ref wc);
+            _classRegistered = true;
+        }
+
+        _hwnd = CreateWindowEx(0, ClassName, "", WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_CLIPCHILDREN,
+            0, 0, 1, 1, hwndParent.Handle, IntPtr.Zero, instance, IntPtr.Zero);
+        if (_hwnd == IntPtr.Zero) throw new InvalidOperationException("無法建立畫面區視窗");
+
+        try
+        {
+            Renderer = new D3DRenderer(_hwnd, 1, 1);
+        }
+        catch (Exception ex)
+        {
+            Renderer = null;
+            RendererError = ex.Message;
+            DiagnosticLog.Write("D3D11 畫面區無法建立，改用 WPF 顯示", ex);
+        }
+
+        OleInitialize(IntPtr.Zero); // WPF 執行緒為 STA；已初始化時回傳 S_FALSE
+        _dropTarget = new FileDropTarget(_hwnd, OnDrop);
+        int hr = RegisterDragDrop(_hwnd, _dropTarget);
+        if (hr < 0) DiagnosticLog.Write($"畫面區 RegisterDragDrop 失敗（0x{hr:X8}）");
+
+        return new HandleRef(this, _hwnd);
+    }
+
+    protected override void DestroyWindowCore(HandleRef hwnd)
+    {
+        RevokeDragDrop(hwnd.Handle);
+        Renderer?.Dispose();
+        Renderer = null;
+        DestroyWindow(hwnd.Handle);
+    }
+
+    protected override IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
+    {
+        switch (msg)
+        {
+            case WM_SIZE:
+                Renderer?.Resize(LoWord(lParam) & 0xFFFF, HiWord(lParam) & 0xFFFF);
+                RedrawRequested?.Invoke();
+                break;
+            case WM_ERASEBKGND:
+                handled = true;
+                return (IntPtr)1; // 由 D3D 繪製，不讓 GDI 先塗背景造成閃爍
+            case WM_PAINT:
+                ValidateRect(hwnd, IntPtr.Zero);
+                RedrawRequested?.Invoke();
+                handled = true;
+                return IntPtr.Zero;
+            case WM_GETDLGCODE:
+                handled = true; // 讓方向鍵、Tab 等也送到畫面區（不被 WPF 拿去切換焦點）
+                return (IntPtr)(DLGC_WANTALLKEYS | DLGC_WANTCHARS | DLGC_WANTARROWS | DLGC_WANTTAB);
+
+            case WM_LBUTTONDOWN or WM_RBUTTONDOWN or WM_MBUTTONDOWN or WM_LBUTTONDBLCLK:
+                SetFocus(hwnd); // 點畫面區即取得鍵盤焦點
+                Report(msg switch
+                {
+                    WM_LBUTTONDOWN => "左鍵按下", WM_RBUTTONDOWN => "右鍵按下", WM_MBUTTONDOWN => "中鍵按下", _ => "左鍵雙擊",
+                }, lParam);
+                break;
+            case WM_LBUTTONUP or WM_RBUTTONUP or WM_MBUTTONUP:
+                Report(msg switch { WM_LBUTTONUP => "左鍵放開", WM_RBUTTONUP => "右鍵放開", _ => "中鍵放開" }, lParam);
+                break;
+            case WM_MOUSEMOVE:
+                Report("滑鼠移動", lParam);
+                break;
+            case WM_MOUSEWHEEL or WM_MOUSEHWHEEL:
+            {
+                int delta = HiWord(wParam);
+                var pt = new POINT { X = LoWord(lParam), Y = HiWord(lParam) }; // 滾輪座標為螢幕座標
+                ScreenToClient(hwnd, ref pt);
+                var (rx, ry) = ToRemote(pt.X, pt.Y);
+                InputReceived?.Invoke(new ScreenInput(msg == WM_MOUSEWHEEL ? "滾輪" : "水平滾輪", $"{delta:+0;-0}", rx, ry));
+                break;
+            }
+            case WM_KEYDOWN or WM_SYSKEYDOWN or WM_KEYUP or WM_SYSKEYUP:
+            {
+                int scan = (int)(((long)lParam >> 16) & 0xFF);
+                bool extended = (((long)lParam >> 24) & 1) != 0;
+                bool down = msg is WM_KEYDOWN or WM_SYSKEYDOWN;
+                InputReceived?.Invoke(new ScreenInput(down ? "按鍵按下" : "按鍵放開",
+                    $"VK 0x{(int)wParam:X2}、掃描碼 0x{scan:X2}{(extended ? "（延伸）" : "")}"));
+                if (msg is WM_SYSKEYDOWN or WM_SYSKEYUP) { handled = true; return IntPtr.Zero; } // Alt 組合鍵不交給 WPF 選單
+                break;
+            }
+            case WM_CHAR:
+            {
+                char c = (char)(int)wParam;
+                InputReceived?.Invoke(new ScreenInput("字元", char.IsControl(c) ? $"U+{(int)c:X4}" : $"「{c}」 U+{(int)c:X4}"));
+                break;
+            }
+            case WM_SETFOCUS:
+                InputReceived?.Invoke(new ScreenInput("焦點", "畫面區取得鍵盤焦點"));
+                break;
+            case WM_KILLFOCUS:
+                InputReceived?.Invoke(new ScreenInput("焦點", "畫面區失去鍵盤焦點"));
+                break;
+        }
+        return base.WndProc(hwnd, msg, wParam, lParam, ref handled);
+    }
+
+    private void Report(string kind, IntPtr lParam)
+    {
+        int x = LoWord(lParam), y = HiWord(lParam);
+        var (rx, ry) = ToRemote(x, y);
+        InputReceived?.Invoke(new ScreenInput(kind, $"畫面區 ({x},{y})", rx, ry));
+    }
+
+    /// <summary>畫面區座標 → 遠端畫面座標（在畫面範圍外時為 null）。B1 以此換算後送出。</summary>
+    public (int? X, int? Y) ToRemote(int x, int y)
+    {
+        var r = Renderer;
+        if (r is null || r.FrameWidth == 0 || r.Scale <= 0) return (null, null);
+        var d = r.DestinationRect;
+        if (x < d.Left || y < d.Top || x >= d.Right || y >= d.Bottom) return (null, null);
+        int rx = (int)((x - d.Left) / r.Scale), ry = (int)((y - d.Top) / r.Scale);
+        return (Math.Clamp(rx, 0, r.FrameWidth - 1), Math.Clamp(ry, 0, r.FrameHeight - 1));
+    }
+
+    private void OnDrop(IReadOnlyList<string> files, POINT client)
+    {
+        var (rx, ry) = ToRemote(client.X, client.Y);
+        FilesDropped?.Invoke(files, rx, ry);
+    }
+}

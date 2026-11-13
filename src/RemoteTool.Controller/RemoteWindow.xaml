@@ -26,7 +26,12 @@
             </StatusBarItem>
             <StatusBarItem>
                 <TextBlock x:Name="InputText" Foreground="DimGray"
-                           Text="畫面區輸入（G0-04 驗證，尚未送到遠端）：點一下畫面區後移動滑鼠、按鍵，或從檔案總管拖入檔案" />
+                           Text="畫面區輸入（G0-04 驗證，尚未送到遠端）：點一下畫面區後移動滑鼠、按鍵" />
+            </StatusBarItem>
+            <StatusBarItem>
+                <!-- 拖放結果獨立一行，不會被之後的滑鼠訊息蓋掉（G4-07～G4-10） -->
+                <TextBlock x:Name="DropText" Foreground="DimGray"
+                           Text="最近一次拖放：（從檔案總管把檔案或資料夾拖到畫面區）" />
             </StatusBarItem>
         </StatusBar>
 

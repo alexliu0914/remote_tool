@@ -147,6 +147,28 @@ internal sealed class RemoteScreenHost : HwndHost
         return base.WndProc(hwnd, msg, wParam, lParam, ref handled);
     }
 
+    /// <summary>
+    /// 畫面區有焦點時，按鍵訊息會先經過 WPF（KeyboardNavigation 會把 Tab、方向鍵拿去切換焦點，G4-05）。
+    /// 這裡直接把按鍵訊息翻譯並送給子視窗，回傳 true 讓 WPF 不再處理；WM_CHAR 仍由 TranslateMessage 產生（輸入法不受影響）。
+    /// </summary>
+    protected override bool TranslateAcceleratorCore(ref System.Windows.Interop.MSG msg, System.Windows.Input.ModifierKeys modifiers)
+    {
+        if (msg.hwnd == _hwnd && msg.message is WM_KEYDOWN or WM_KEYUP or WM_SYSKEYDOWN or WM_SYSKEYUP)
+        {
+            TranslateMessage(ref msg);
+            DispatchMessage(ref msg);
+            return true;
+        }
+        return base.TranslateAcceleratorCore(ref msg, modifiers);
+    }
+
+    /// <summary>焦點在畫面區時，不讓 WPF 以 Tab 把焦點移出去。</summary>
+    protected override bool TabIntoCore(System.Windows.Input.TraversalRequest request)
+    {
+        SetFocus(_hwnd);
+        return true;
+    }
+
     private void Report(string kind, IntPtr lParam)
     {
         int x = LoWord(lParam), y = HiWord(lParam);

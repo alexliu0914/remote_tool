@@ -297,15 +297,17 @@ public partial class RemoteWindow : Window
     private async void OnFilesDropped(IReadOnlyList<string> paths, int? remoteX, int? remoteY)
     {
         _drops++;
-        int files = paths.Count(File.Exists), folders = paths.Count(Directory.Exists);
-        _lastInput = $"拖入 {files} 個檔案、{folders} 個資料夾（計算中…）";
         UpdateInputText();
+        int files = paths.Count(File.Exists), folders = paths.Count(Directory.Exists);
+        string time = DateTime.Now.ToString("HH:mm:ss");
+        DropText.Text = $"最近一次拖放（{time}）：{files} 個檔案、{folders} 個資料夾（計算中…）";
 
         // 資料夾內的檔案數在背景計算（上限 100,000，避免拖入整顆磁碟時卡住）
         long total = await Task.Run(() => CountFiles(paths, 100_000));
         string where = remoteX is int rx ? $"，放在遠端 ({rx},{remoteY})" : "";
-        _lastInput = $"拖入 {files} 個檔案、{folders} 個資料夾（共 {total:N0} 個檔案{(total >= 100_000 ? " 以上" : "")}）{where}；傳輸於 M3 實作";
-        UpdateInputText();
+        string first = paths.Count > 0 ? Path.GetFileName(paths[0].TrimEnd('\\')) : "";
+        DropText.Text = $"最近一次拖放（{time}）：{files} 個檔案、{folders} 個資料夾，共 {total:N0} 個檔案{(total >= 100_000 ? " 以上" : "")}{where}" +
+                        $"｜第一項：{first}｜累計 {_drops} 次（傳輸於 M3 實作）";
         DiagnosticLog.Write($"畫面區拖放：{files} 個檔案、{folders} 個資料夾、共 {total} 個檔案；第一項：{paths.FirstOrDefault()}");
     }
 

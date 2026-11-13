@@ -42,6 +42,9 @@ internal static class NativeMethods
         int x, int y, int width, int height, IntPtr parent, IntPtr menu, IntPtr instance, IntPtr param);
 
     [DllImport("user32.dll")] public static extern bool DestroyWindow(IntPtr hwnd);
+    [DllImport("user32.dll")] public static extern bool TranslateMessage(ref System.Windows.Interop.MSG msg);
+    [DllImport("user32.dll")] public static extern IntPtr DispatchMessage(ref System.Windows.Interop.MSG msg);
+    [DllImport("user32.dll")] public static extern IntPtr GetFocus();
     [DllImport("user32.dll")] public static extern IntPtr SetFocus(IntPtr hwnd);
     [DllImport("user32.dll")] public static extern bool GetClientRect(IntPtr hwnd, out RECT rect);
     [DllImport("user32.dll")] public static extern bool ScreenToClient(IntPtr hwnd, ref POINT point);

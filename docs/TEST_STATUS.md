@@ -10,7 +10,7 @@
 | G0-01 | **PARTIAL_PASS** | 單機（127.0.0.1）Windows 11：TLS 1.3、首次指紋核對、指紋變更中止、Argon2id 帳密登入、漸進延遲節流、三條連線與 nonce + HMAC token、Busy、斷線偵測（T-003、T-005、T-007、T-013、**T-014 規劃書對齊後回歸 R-01～R-16 全部通過**）；Protocol V1 自動測試通過（T-010） | ① ~~單機回歸~~（T-014 已完成）② **兩台實體 Win11**（TESTING.md 第五節）③ **Video、File 中斷後獨立重連**：自動測試（T-021）與單機實機 R-21、R-22（T-026）通過，待雙機 D-05。未完成前不得標 PASS |
 | G0-02 | IN_PROGRESS | A1 單機（T-015、T-016、T-020）；A2a 軟體 H.264（T-028）；**A2a-2 硬體 H.264（Intel Quick Sync）單機通過，含記憶體（T-030、T-032）** | HwndHost + D3D11 與硬體解碼（A2b）；鍵鼠（B1）；兩台實體 Win11 |
 | G0-03 | NOT_STARTED | — | 全部 |
-| G0-04 | IN_PROGRESS | A2b HwndHost + D3D11 畫面區、鍵鼠接收、Explorer 拖入（檔案與資料夾）已實作（T-033） | Windows 實機 G4-01～G4-13；兩台實體 Win11 |
+| G0-04 | IN_PROGRESS | A2b HwndHost + D3D11 畫面區：顯示、滑鼠接收與座標換算、注音輸入單機通過（T-034）；Tab / 方向鍵與拖放待重測 | Windows 實機 G4-01～G4-13；兩台實體 Win11 |
 | G0-05 | NOT_STARTED | — | 全部 |
 | G0-06 | NOT_STARTED | — | 研究項目，不阻擋 MVP |
 | G0-07 | NOT_STARTED | — | 研究項目，不阻擋 MVP |
@@ -64,11 +64,12 @@
 | T-031 | 2026-11-12 | 本筆提交 | 雲端 Linux（.NET 10） | Claude | HW-06 對策：編碼輸出改用 ArrayPool（每張一個借用緩衝區、送出後歸還），VideoFrame 分塊改為切片不複製（Data 改為 ReadOnlyMemory，線路格式不變），接收端組裝時複製以免讀取緩衝區被覆寫；硬體編碼器輸出改保留 sample 至組裝時才讀取；`--memlog` 新增「GC 已提交」與「原生（估計）＝私有 − GC 已提交」。全部回歸 | PASS | 164/164（Video 39）。新增測試：分塊零複製且遵守長度、組裝時複製資料。**是否解決須實機以新版 `--memlog` 重測 HW-06**；若「原生（估計）」仍持續增加，代表硬體編碼路徑有原生記憶體洩漏，需進一步處理 |
 | T-032 | 2026-11-13 | 865d110 之建置 | 使用者 Windows 11 實機，單機（Intel Quick Sync） | 使用者 / Claude | HW-06 重測（新版 `--memlog`，連線約 21 分鐘並持續拖動視窗） | PASS | **原生（估計）持平**：127 → 118 → 121 → 123 → 127 MB（第 1、5、10、15、20 分鐘）——硬體編碼路徑**無原生記憶體洩漏**。私有 157 → 171 MB（+14 MB / 20 分鐘，T-030 為 +90 MB / 10 分鐘），增加部分全在「GC 已提交」30 → 44 MB；期間 gen2 GC 次數維持 2（第 1 分鐘後未再做完整 GC），為尚未回收的第 2 代物件。雲端以相同 H.264 路徑（借用緩衝區、分塊、組裝）長時間執行並**強制完整 GC**：912 張後受控堆積 22.2 → 22.7 MB（+0.5 MB，新增測試 `H264Path_PooledBuffers_ManagedMemoryStaysFlat`），確認受控端無洩漏。後續：M1「連續使用 2 小時」時以 `--memlog-fullgc` 再確認 |
 | T-033 | 2026-11-13 | 本筆提交 | 雲端 Linux（.NET 10） | Claude | A2b：HwndHost 畫面區（D3D11 / Direct2D / DirectWrite）、子視窗鍵鼠接收、OLE 拖放目標；交叉建置、win-x64 發佈含 Vortice.Direct2D1 / Direct3D11 / DXGI；全部回歸 | PASS | 165/165。**WPF、HwndHost、D3D11、OLE 拖放只能在 Windows 實機驗證**（TESTING.md 4.7 G4-01～G4-13） |
+| T-034 | 2026-11-13 | 2b4c3c1 之建置 | 使用者 Windows 11 實機，單機 | 使用者 | A2b：TESTING.md 4.7 G4-01～G4-13 | 部分 **FAIL** | G4-01～G4-04、G4-06、G4-11、G4-12 **PASS**（D3D11 顯示、縮放與捲軸、滑鼠座標換算含 125% / 150% 縮放、滑鼠按鍵與滾輪、注音輸入、重連覆蓋訊息）。G4-05 **FAIL**：Tab / 方向鍵讓焦點跳到工具列（WPF KeyboardNavigation 先處理）。G4-07～G4-10 **無法判定**：拖放訊息與滑鼠訊息共用一行，立刻被蓋掉。G4-13 **未測**（使用者不清楚記錄檔位置）。修正：畫面區覆寫 HwndHost.TranslateAccelerator，按鍵訊息直接翻譯並送給子視窗、不交給 WPF；拖放結果改為獨立一行並保留；TESTING.md 補記錄檔路徑 |
 
 ## 4. 尚待人工執行
 
 | 項目 | 對應 | 需要 | 步驟 |
 | --- | --- | --- | --- |
 | V-11 縮小 | G0-02 | 寬度大於 1920 的螢幕 | [TESTING.md](TESTING.md) 4.4 V-11 |
-| A2b 畫面區 | G0-04 | 一台 Windows 11 | [TESTING.md](TESTING.md) 4.7 G4-01～G4-13 |
+| A2b 畫面區重測 | G0-04 | 一台 Windows 11 | [TESTING.md](TESTING.md) 4.7 G4-05、G4-07～G4-10、G4-13 |
 | 雙機驗證 | G0-01、G0-02 | 兩台實體 Windows 11、同一區域網路 | [TESTING.md](TESTING.md) 第五節 5.6 |
